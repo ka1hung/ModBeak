@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      # libserialport's CocoaPods spec builds the C lib from source via
+      # autotools, which need these brew packages.
+      - name: Install libserialport build deps
+        run: brew install automake autoconf libtool pkg-config
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Package .app into zip
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r -y "modbeak-macos-${GITHUB_REF_NAME}.zip" ModBeak.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modbeak-macos
+          path: build/macos/Build/Products/Release/modbeak-macos-*.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Package Release folder into zip
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path build/windows/x64/runner/Release/* `
+            -DestinationPath "modbeak-windows-${env:GITHUB_REF_NAME}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modbeak-windows
+          path: modbeak-windows-*.zip
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build clang cmake pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libserialport-dev
+
+      - run: flutter pub get
+      - run: flutter build linux --release
+
+      - name: Package bundle into tar.gz
+        run: |
+          cd build/linux/x64/release/bundle
+          tar -czf "../../../../../modbeak-linux-x64-${GITHUB_REF_NAME}.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modbeak-linux-x64
+          path: modbeak-linux-x64-*.tar.gz
+
+  release:
+    needs:
+      - build-macos
+      - build-windows
+      - build-linux-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
