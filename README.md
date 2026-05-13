@@ -155,3 +155,9 @@ lib/
 ## Tech stack
 
 Flutter • Riverpod • freezed • pluto_grid • go_router • flutter_libserialport
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 kaihung
