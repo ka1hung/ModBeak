@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/runtime/device_hub.dart';
+import '../../core/runtime/poll_result.dart';
 import '../../data/models/device_config.dart';
 import '../../data/models/register_format.dart';
 import '../../data/models/watch_spec.dart';
@@ -10,11 +11,13 @@ import '../../data/persistence/config_io.dart';
 import '../../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../watch_window/mdi_workspace.dart';
+import '../widgets/brand.dart';
 import '../widgets/conn_indicator.dart';
 import 'dialogs/add_device_dialog.dart';
 import 'dialogs/add_watch_dialog.dart';
 
-/// Main console — see GUI.md §S1.
+/// Main console — top toolbar, sidebar (devices + watches), and the right
+/// pane that hosts the device header and the MDI watch workspace.
 class MainWindow extends ConsumerStatefulWidget {
   const MainWindow({super.key});
 
@@ -34,7 +37,6 @@ class _Selection {
 
 class _MainWindowState extends ConsumerState<MainWindow> {
   _Selection _selection = const _Selection();
-  // Devices whose watch list is currently expanded.
   final Set<String> _expanded = {};
   final GlobalKey<MdiWorkspaceState> _mdiKey =
       GlobalKey<MdiWorkspaceState>();
@@ -42,17 +44,31 @@ class _MainWindowState extends ConsumerState<MainWindow> {
   @override
   void initState() {
     super.initState();
+    // Belt-and-braces: also rebuild from here when the theme flips. The
+    // root MaterialApp already rebuilds on `themeModeNotifier`, but a
+    // listener at this level guarantees `build` re-runs even if the parent
+    // tree happens to short-circuit the diff (e.g. via const wrapping).
+    themeModeNotifier.addListener(_onThemeChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final saved = await ConfigStore.load();
       if (!mounted) return;
       await applyConfig(ref, saved);
       ref.read(autoSaveProvider);
-      // Auto-expand devices that already have watches.
       final watches = ref.read(watchListProvider);
       setState(() {
         _expanded.addAll(watches.map((w) => w.deviceId));
       });
     });
+  }
+
+  @override
+  void dispose() {
+    themeModeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   void _selectDevice(String id) {
@@ -82,7 +98,6 @@ class _MainWindowState extends ConsumerState<MainWindow> {
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceListProvider);
-    // Clear stale selection.
     if (_selection.deviceId != null &&
         !devices.any((d) => d.id == _selection.deviceId)) {
       _selection = const _Selection();
@@ -113,16 +128,18 @@ class _MainWindowState extends ConsumerState<MainWindow> {
     );
 
     return Scaffold(
-      drawer: isCompact ? Drawer(child: SafeArea(child: sidebar)) : null,
+      backgroundColor: AppColors.bg0,
+      drawer:
+          isCompact ? Drawer(child: SafeArea(child: sidebar)) : null,
       body: SafeArea(
         child: Column(
           children: [
-            _Toolbar(
+            _TopToolbar(
               onAddDevice: _onAddDevice,
               onAddWatch: _onAddWatch,
               showMenu: isCompact,
             ),
-            const Divider(height: 1),
+            Container(height: 1, color: AppColors.border),
             Expanded(
               child: isCompact
                   ? _RightPane(
@@ -133,7 +150,7 @@ class _MainWindowState extends ConsumerState<MainWindow> {
                   : Row(
                       children: [
                         sidebar,
-                        const VerticalDivider(width: 1),
+                        Container(width: 1, color: AppColors.border),
                         Expanded(
                           child: _RightPane(
                             selection: _selection,
@@ -237,11 +254,11 @@ Future<void> _export(BuildContext context, WidgetRef ref) async {
   }
 }
 
-class _Toolbar extends StatelessWidget {
+class _TopToolbar extends StatelessWidget {
   final VoidCallback onAddDevice;
   final VoidCallback onAddWatch;
   final bool showMenu;
-  const _Toolbar({
+  const _TopToolbar({
     required this.onAddDevice,
     required this.onAddWatch,
     this.showMenu = false,
@@ -250,53 +267,66 @@ class _Toolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: AppColors.bgRaised,
+      height: 38,
+      color: AppColors.bg3,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Row(
         children: [
           if (showMenu) ...[
             Builder(
-              builder: (ctx) => IconButton(
-                icon: const Icon(Icons.menu, size: 20, color: AppColors.text),
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(minWidth: 36, minHeight: 36),
-                onPressed: () => Scaffold.of(ctx).openDrawer(),
+              builder: (ctx) => _IconChip(
                 tooltip: 'Devices',
+                onTap: () => Scaffold.of(ctx).openDrawer(),
+                child: Icon(Icons.menu, size: 16, color: AppColors.text),
               ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
           ],
-          if (!showMenu) const SizedBox(width: 4),
-          _ToolBtn(label: '+ Device', onTap: onAddDevice),
-          const SizedBox(width: 8),
-          _ToolBtn(label: '+ Watch', onTap: onAddWatch),
+          const BrandMark(),
+          _Divider(),
+          _MbtButton(
+            kind: _ButtonKind.primary,
+            icon: Icons.add,
+            label: 'Device',
+            onTap: onAddDevice,
+          ),
+          const SizedBox(width: 6),
+          _MbtButton(
+            kind: _ButtonKind.secondary,
+            icon: Icons.add,
+            label: 'Watch',
+            onTap: onAddWatch,
+          ),
+          const Spacer(),
           if (!showMenu) ...[
-            const SizedBox(width: 8),
             Consumer(builder: (context, ref, _) {
-              return _ToolBtn(
+              return _MbtButton(
+                kind: _ButtonKind.ghost,
+                icon: Icons.file_download_outlined,
                 label: 'Import',
                 onTap: () => _import(context, ref),
               );
             }),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             Consumer(builder: (context, ref, _) {
-              return _ToolBtn(
+              return _MbtButton(
+                kind: _ButtonKind.ghost,
+                icon: Icons.file_upload_outlined,
                 label: 'Export',
                 onTap: () => _export(context, ref),
               );
             }),
+            _Divider(),
           ],
-          const Spacer(),
-          if (showMenu)
+          _ThemeToggle(),
+          if (showMenu) ...[
+            const SizedBox(width: 4),
             Consumer(builder: (context, ref, _) {
               return PopupMenuButton<String>(
                 tooltip: 'More',
                 padding: EdgeInsets.zero,
-                icon: const Icon(Icons.more_vert,
-                    size: 20, color: AppColors.text),
-                color: AppColors.panel,
+                icon: Icon(Icons.more_horiz, size: 16, color: AppColors.textMuted),
+                color: AppColors.bg2,
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'import', child: Text('Import…')),
                   PopupMenuItem(value: 'export', child: Text('Export…')),
@@ -307,34 +337,187 @@ class _Toolbar extends StatelessWidget {
                 },
               );
             }),
+          ],
         ],
       ),
     );
   }
 }
 
-class _ToolBtn extends StatelessWidget {
-  final String label;
-  final VoidCallback? onTap;
-  const _ToolBtn({required this.label, this.onTap});
+class _Divider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 18,
+      color: AppColors.border,
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+    );
+  }
+}
+
+class _ThemeToggle extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (_, mode, _) {
+        final isLight = mode == AppThemeMode.light;
+        return _IconChip(
+          tooltip: isLight ? 'Switch to dark theme' : 'Switch to light theme',
+          onTap: () => setThemeMode(
+            isLight ? AppThemeMode.dark : AppThemeMode.light,
+          ),
+          child: Icon(
+            isLight ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+            size: 14,
+            color: AppColors.textMuted,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _IconChip extends StatelessWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final String? tooltip;
+  const _IconChip({required this.child, required this.onTap, this.tooltip});
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onTap != null;
-    return InkWell(
+    final btn = InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(2),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        width: 26,
+        height: 26,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           border: Border.all(color: AppColors.border),
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(2),
         ),
-        child: Text(label,
-            style: TextStyle(
-              color: enabled ? AppColors.text : AppColors.textMuted,
-              fontSize: 12,
-            )),
+        child: child,
+      ),
+    );
+    return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
+  }
+}
+
+enum _ButtonKind { primary, secondary, ghost, outline, danger }
+
+class _MbtButton extends StatefulWidget {
+  final _ButtonKind kind;
+  final IconData? icon;
+  final String? label;
+  final VoidCallback? onTap;
+  final bool disabled;
+  final bool active;
+
+  const _MbtButton({
+    required this.kind,
+    this.icon,
+    this.label,
+    this.onTap,
+    this.disabled = false,
+    this.active = false,
+  });
+
+  @override
+  State<_MbtButton> createState() => _MbtButtonState();
+}
+
+class _MbtButtonState extends State<_MbtButton> {
+  bool _hover = false;
+
+  Color _bg() {
+    if (widget.active) return AppColors.accentBg;
+    switch (widget.kind) {
+      case _ButtonKind.primary:
+        return _hover ? AppColors.accentDim : AppColors.accent;
+      case _ButtonKind.secondary:
+        return _hover ? AppColors.bg4 : AppColors.bg3;
+      case _ButtonKind.ghost:
+        return _hover ? AppColors.bg3 : Colors.transparent;
+      case _ButtonKind.outline:
+        return _hover ? AppColors.bg3 : Colors.transparent;
+      case _ButtonKind.danger:
+        return _hover ? AppColors.errorBg : Colors.transparent;
+    }
+  }
+
+  Color _fg() {
+    if (widget.active) return AppColors.accent;
+    switch (widget.kind) {
+      case _ButtonKind.primary:
+        return AppColors.onAccent;
+      case _ButtonKind.secondary:
+        return AppColors.text;
+      case _ButtonKind.ghost:
+        return AppColors.textMuted;
+      case _ButtonKind.outline:
+        return AppColors.text;
+      case _ButtonKind.danger:
+        return AppColors.error;
+    }
+  }
+
+  Color _border() {
+    if (widget.active) return AppColors.accent;
+    switch (widget.kind) {
+      case _ButtonKind.primary:
+        return AppColors.accent;
+      case _ButtonKind.secondary:
+        return AppColors.borderStrong;
+      case _ButtonKind.ghost:
+        return Colors.transparent;
+      case _ButtonKind.outline:
+        return AppColors.border;
+      case _ButtonKind.danger:
+        return AppColors.errorDim;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = widget.disabled || widget.onTap == null;
+    return Opacity(
+      opacity: disabled ? 0.4 : 1,
+      child: MouseRegion(
+        cursor: disabled
+            ? SystemMouseCursors.basic
+            : SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: disabled ? null : widget.onTap,
+          child: Container(
+            height: 22,
+            padding: EdgeInsets.symmetric(
+                horizontal: widget.label == null ? 6 : 8),
+            decoration: BoxDecoration(
+              color: _bg(),
+              border: Border.all(color: _border()),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null)
+                  Icon(widget.icon, size: 12, color: _fg()),
+                if (widget.icon != null && widget.label != null)
+                  const SizedBox(width: 4),
+                if (widget.label != null)
+                  Text(
+                    widget.label!,
+                    style: AppType.labelSm.copyWith(color: _fg()),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -365,43 +548,51 @@ class _Sidebar extends ConsumerWidget {
 
     return Container(
       width: 260,
-      color: AppColors.bgRaised,
-      child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+      color: AppColors.bg2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: Text('DEVICES',
-                style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 11,
-                    letterSpacing: 1.2)),
+          Padding(
+            padding:
+                const EdgeInsets.fromLTRB(14, 10, 14, 6),
+            child: Text(
+              'DEVICES',
+              style: AppType.labelSm.copyWith(color: AppColors.textDim),
+            ),
           ),
-          if (devices.isEmpty)
-            const Padding(
-              padding:
-                  EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text(
-                'No devices.\nClick + Device to add one.',
-                style:
-                    TextStyle(color: AppColors.textMuted, fontSize: 12),
-              ),
-            )
-          else
-            for (final d in devices)
-              _DeviceNode(
-                device: d,
-                connState:
-                    connStates[d.id] ?? DeviceConnState.disconnected,
-                watches: watches.where((w) => w.deviceId == d.id).toList(),
-                isExpanded: expanded.contains(d.id),
-                isSelectedDevice:
-                    selection.deviceId == d.id && selection.watchId == null,
-                selectedWatchId: selection.watchId,
-                onTapDevice: () => onSelectDevice(d.id),
-                onTapWatch: (id) => onSelectWatch(d.id, id),
-                onToggleExpand: () => onToggleExpand(d.id),
-              ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+              children: [
+                if (devices.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    child: Text(
+                      'No devices.\nClick + Device to add one.',
+                      style: AppType.caption
+                          .copyWith(color: AppColors.textMuted),
+                    ),
+                  )
+                else
+                  for (final d in devices)
+                    _DeviceNode(
+                      device: d,
+                      connState: connStates[d.id] ??
+                          DeviceConnState.disconnected,
+                      watches:
+                          watches.where((w) => w.deviceId == d.id).toList(),
+                      isExpanded: expanded.contains(d.id),
+                      isSelectedDevice: selection.deviceId == d.id &&
+                          selection.watchId == null,
+                      selectedWatchId: selection.watchId,
+                      onTapDevice: () => onSelectDevice(d.id),
+                      onTapWatch: (id) => onSelectWatch(d.id, id),
+                      onToggleExpand: () => onToggleExpand(d.id),
+                    ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -446,31 +637,49 @@ class _DeviceNode extends ConsumerWidget {
           onToggleExpand: onToggleExpand,
         ),
         if (isExpanded)
-          ...watches.map((w) => _WatchTreeRow(
-                spec: w,
-                selected: w.id == selectedWatchId,
-                onTap: () => onTapWatch(w.id),
-              )),
-        if (isExpanded)
           Padding(
-            padding:
-                const EdgeInsets.only(left: 32, top: 2, bottom: 6, right: 12),
-            child: InkWell(
-              onTap: () async {
-                final spec = await showDialog<WatchSpec>(
-                  context: context,
-                  builder: (_) =>
-                      AddWatchDialog(initialDeviceId: device.id),
-                );
-                if (spec != null) onTapWatch(spec.id);
-              },
-              borderRadius: BorderRadius.circular(4),
-              child: const Padding(
-                padding:
-                    EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                child: Text('+ New watch',
-                    style: TextStyle(
-                        color: AppColors.textMuted, fontSize: 11)),
+            padding: const EdgeInsets.only(left: 12),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: AppColors.borderFaint),
+                ),
+              ),
+              padding: const EdgeInsets.only(left: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ...watches.map((w) => _WatchTreeRow(
+                        spec: w,
+                        selected: w.id == selectedWatchId,
+                        onTap: () => onTapWatch(w.id),
+                      )),
+                  InkWell(
+                    onTap: () async {
+                      final spec = await showDialog<WatchSpec>(
+                        context: context,
+                        builder: (_) => AddWatchDialog(
+                            initialDeviceId: device.id),
+                      );
+                      if (spec != null) onTapWatch(spec.id);
+                    },
+                    borderRadius: BorderRadius.circular(2),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add,
+                              size: 11, color: AppColors.textMuted),
+                          const SizedBox(width: 4),
+                          Text('New watch',
+                              style: AppType.caption
+                                  .copyWith(color: AppColors.textMuted)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -503,88 +712,111 @@ class _DeviceRow extends ConsumerWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
+        height: 40,
+        margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 1),
         decoration: BoxDecoration(
-          color: selected ? AppColors.bg : Colors.transparent,
-          border: selected
-              ? const Border(
-                  left: BorderSide(color: AppColors.brand, width: 2))
-              : null,
+          color: selected ? AppColors.bgSelected : Colors.transparent,
+          borderRadius: BorderRadius.circular(2),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        child: Row(
+        child: Stack(
           children: [
-            IconButton(
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 22, minHeight: 22),
-              onPressed: watchCount > 0 ? onToggleExpand : null,
-              icon: Icon(
-                isExpanded
-                    ? Icons.keyboard_arrow_down
-                    : Icons.keyboard_arrow_right,
-                size: 16,
-                color: watchCount > 0
-                    ? AppColors.text
-                    : AppColors.textMuted.withValues(alpha: 0.4),
+            if (selected)
+              Positioned(
+                left: 0,
+                top: 4,
+                bottom: 4,
+                child: Container(width: 2, color: AppColors.accent),
               ),
-            ),
-            ConnIndicator(state: connState, dotSize: 8),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
                 children: [
-                  Text(device.name,
-                      style: const TextStyle(
-                          fontSize: 13, color: AppColors.text)),
-                  Row(
-                    children: [
-                      _TransportChip(tag: device.transportTag),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          device.addressLine,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11, color: AppColors.textMuted),
-                        ),
+                  GestureDetector(
+                    onTap: watchCount > 0 ? onToggleExpand : null,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      width: 16,
+                      height: 22,
+                      child: Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_right,
+                        size: 14,
+                        color: watchCount > 0
+                            ? AppColors.textMuted
+                            : AppColors.textFaint,
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  StatusDot(
+                    status: ConnIndicator.dotFor(connState),
+                    size: 8,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          device.name,
+                          style: AppType.body.copyWith(
+                            color: AppColors.text,
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 1),
+                        Row(
+                          children: [
+                            _TransportChip(tag: device.transportTag),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                device.addressLine,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppType.monoSm.copyWith(
+                                  fontSize: 10,
+                                  color: AppColors.textDim,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  _MoreMenu(
+                    items: const [
+                      ('connect', 'Connect'),
+                      ('disconnect', 'Disconnect'),
+                      ('edit', 'Edit…'),
+                      ('remove', 'Remove'),
                     ],
+                    onSelected: (v) async {
+                      final notifier = ref.read(deviceConnProvider.notifier);
+                      switch (v) {
+                        case 'connect':
+                          await notifier.connect(device.id);
+                        case 'disconnect':
+                          await notifier.disconnect(device.id);
+                        case 'edit':
+                          await showDialog(
+                            context: context,
+                            builder: (_) => AddDeviceDialog(edit: device),
+                          );
+                        case 'remove':
+                          await ref
+                              .read(deviceListProvider.notifier)
+                              .remove(device.id);
+                      }
+                    },
                   ),
                 ],
               ),
-            ),
-            PopupMenuButton<String>(
-              tooltip: '',
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.more_vert,
-                  size: 14, color: AppColors.textMuted),
-              color: AppColors.panel,
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'connect', child: Text('Connect')),
-                const PopupMenuItem(
-                    value: 'disconnect', child: Text('Disconnect')),
-                const PopupMenuItem(value: 'edit', child: Text('Edit…')),
-                const PopupMenuItem(value: 'remove', child: Text('Remove')),
-              ],
-              onSelected: (v) async {
-                final notifier = ref.read(deviceConnProvider.notifier);
-                switch (v) {
-                  case 'connect':
-                    await notifier.connect(device.id);
-                  case 'disconnect':
-                    await notifier.disconnect(device.id);
-                  case 'edit':
-                    await showDialog(
-                      context: context,
-                      builder: (_) => AddDeviceDialog(edit: device),
-                    );
-                  case 'remove':
-                    await ref
-                        .read(deviceListProvider.notifier)
-                        .remove(device.id);
-                }
-              },
             ),
           ],
         ),
@@ -603,70 +835,66 @@ class _WatchTreeRow extends ConsumerWidget {
     required this.onTap,
   });
 
-  String get _fcLabel {
-    switch (spec.functionCode) {
-      case 1:
-        return 'FC01';
-      case 2:
-        return 'FC02';
-      case 3:
-        return 'FC03';
-      case 4:
-        return 'FC04';
-      default:
-        return 'FC${spec.functionCode}';
-    }
+  String get _fcLabel => switch (spec.functionCode) {
+        1 => 'FC01',
+        2 => 'FC02',
+        3 => 'FC03',
+        4 => 'FC04',
+        _ => 'FC${spec.functionCode}',
+      };
+
+  /// Tri-state poll status colour for the FC chip dot. Drives the chip dot
+  /// only — we used to tint it by FC, but red/coral FC01/02 dots read as
+  /// "error" at a glance. Now the colour ALWAYS reflects what's happening:
+  ///   * green — last poll succeeded
+  ///   * red   — last poll failed (or device is in error state)
+  ///   * gray  — device disconnected / no poll yet (paused)
+  Color _statusColor(DeviceConnState conn, PollResult? result) {
+    if (conn == DeviceConnState.error) return AppColors.error;
+    if (conn != DeviceConnState.connected) return AppColors.offline;
+    if (result is PollErr) return AppColors.error;
+    if (result is PollOk) return AppColors.online;
+    return AppColors.offline;
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final conn = ref.watch(connStateProvider(spec.deviceId));
+    final result = ref.watch(watchResultProvider(spec.id));
     return InkWell(
       onTap: onTap,
       child: Container(
+        height: 26,
+        margin: const EdgeInsets.symmetric(vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
-          color: selected
-              ? AppColors.brand.withValues(alpha: 0.12)
-              : Colors.transparent,
-          border: selected
-              ? const Border(
-                  left:
-                      BorderSide(color: AppColors.brand, width: 2))
-              : const Border(
-                  left: BorderSide(color: Colors.transparent, width: 2)),
+          color: selected ? AppColors.bg4 : Colors.transparent,
+          borderRadius: BorderRadius.circular(2),
         ),
-        padding:
-            const EdgeInsets.fromLTRB(34, 4, 6, 4),
         child: Row(
           children: [
+            _FCChip(label: _fcLabel, tint: _statusColor(conn, result)),
+            const SizedBox(width: 5),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$_fcLabel · ${spec.startAddress}–${spec.startAddress + spec.quantity - 1}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color:
-                          selected ? AppColors.text : AppColors.text,
-                    ),
-                  ),
-                  Text(
-                    spec.format.label,
-                    style: const TextStyle(
-                        fontSize: 10, color: AppColors.textMuted),
-                  ),
-                ],
+              child: Text(
+                '${spec.startAddress}–${spec.startAddress + spec.quantity - 1}',
+                style: AppType.monoSm
+                    .copyWith(fontSize: 10, color: AppColors.textMuted),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-            PopupMenuButton<String>(
-              tooltip: '',
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.more_horiz,
-                  size: 14, color: AppColors.textMuted),
-              color: AppColors.panel,
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit', child: Text('Edit…')),
-                const PopupMenuItem(value: 'remove', child: Text('Remove')),
+            Text(
+              spec.format.label,
+              style: AppType.labelSm.copyWith(
+                fontSize: 9,
+                color: AppColors.textDim,
+              ),
+            ),
+            _MoreMenu(
+              dense: true,
+              items: const [
+                ('edit', 'Edit…'),
+                ('remove', 'Remove'),
               ],
               onSelected: (v) async {
                 switch (v) {
@@ -687,7 +915,74 @@ class _WatchTreeRow extends ConsumerWidget {
   }
 }
 
-// ─── Right pane: device header + watch pane (or hint) ──────────────────────
+class _FCChip extends StatelessWidget {
+  final String label;
+  final Color tint;
+  const _FCChip({required this.label, required this.tint});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Tri-state poll-status LED — round to read as a status light
+          // rather than a "type" swatch.
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: tint,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(label,
+              style: AppType.labelSm.copyWith(
+                fontSize: 9,
+                color: AppColors.text,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+class _MoreMenu extends StatelessWidget {
+  final List<(String, String)> items;
+  final ValueChanged<String> onSelected;
+  final bool dense;
+  const _MoreMenu({
+    required this.items,
+    required this.onSelected,
+    this.dense = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: '',
+      padding: EdgeInsets.zero,
+      iconSize: dense ? 16 : 18,
+      icon: Icon(Icons.more_vert,
+          size: dense ? 14 : 16, color: AppColors.textMuted),
+      color: AppColors.bg2,
+      itemBuilder: (_) => [
+        for (final (v, label) in items)
+          PopupMenuItem(value: v, child: Text(label)),
+      ],
+      onSelected: onSelected,
+    );
+  }
+}
+
+// ─── Right pane: device header + watches toolbar + MDI ─────────────────────
 
 class _RightPane extends ConsumerWidget {
   final _Selection selection;
@@ -701,16 +996,20 @@ class _RightPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (selection.deviceId == null) return const _EmptyHint();
+    // NOTE: `_EmptyHint()` is intentionally NOT const — its build reads
+    // `AppColors.*` getters, and a const-canonical instance would let
+    // Flutter short-circuit the element diff on every theme flip, leaving
+    // the empty pane painted with the old palette.
+    if (selection.deviceId == null) return _EmptyHint();
     final detail = ref.watch(deviceDetailProvider(selection.deviceId!));
-    if (detail == null) return const _EmptyHint();
+    if (detail == null) return _EmptyHint();
 
     return Container(
-      color: AppColors.bg,
+      color: AppColors.bg1,
       child: Column(
         children: [
           _DeviceHeader(detail: detail),
-          const Divider(height: 1),
+          Container(height: 1, color: AppColors.border),
           _WatchesToolbar(
             detail: detail,
             onSelectWatch: (id) => onSelectWatch(detail.config.id, id),
@@ -720,7 +1019,7 @@ class _RightPane extends ConsumerWidget {
             onResetCounters: () =>
                 mdiKey.currentState?.resetCounters(detail.config.id),
           ),
-          const Divider(height: 1),
+          Container(height: 1, color: AppColors.border),
           Expanded(
             child: MdiWorkspace(
               key: mdiKey,
@@ -734,7 +1033,6 @@ class _RightPane extends ConsumerWidget {
   }
 }
 
-/// Slim toolbar between device header and MDI workspace.
 class _WatchesToolbar extends StatelessWidget {
   final DeviceDetail detail;
   final ValueChanged<String> onSelectWatch;
@@ -755,35 +1053,35 @@ class _WatchesToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasWatches = detail.watches.isNotEmpty;
     return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      color: AppColors.bgRaised,
+      height: 36,
+      color: AppColors.bg2,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
-          Text(
-            'WATCHES (${detail.watches.length})',
-            style: const TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 11,
-              letterSpacing: 1.2,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          Text('WATCHES',
+              style:
+                  AppType.label.copyWith(color: AppColors.textMuted)),
+          const SizedBox(width: 8),
+          Text('${detail.watches.length}',
+              style: AppType.mono.copyWith(color: AppColors.text)),
           if (hasWatches) ...[
-            const SizedBox(width: 16),
+            const SizedBox(width: 8),
+            Container(width: 1, height: 16, color: AppColors.border),
+            const SizedBox(width: 8),
             _LayoutBtn(
               icon: Icons.dashboard_customize_outlined,
               tooltip: 'Cascade',
+              active: true,
               onTap: () => onLayout(MdiLayoutMode.cascade),
             ),
             _LayoutBtn(
               icon: Icons.view_agenda_outlined,
-              tooltip: 'Tile horizontal (rows)',
+              tooltip: 'Tile rows',
               onTap: () => onLayout(MdiLayoutMode.tileHorizontal),
             ),
             _LayoutBtn(
               icon: Icons.view_column_outlined,
-              tooltip: 'Tile vertical (columns)',
+              tooltip: 'Tile cols',
               onTap: () => onLayout(MdiLayoutMode.tileVertical),
             ),
             _LayoutBtn(
@@ -792,28 +1090,31 @@ class _WatchesToolbar extends StatelessWidget {
               onTap: () => onLayout(MdiLayoutMode.grid),
             ),
             const SizedBox(width: 4),
+            Container(width: 1, height: 16, color: AppColors.border),
+            const SizedBox(width: 4),
             _LayoutBtn(
               icon: Icons.unfold_more,
-              tooltip: 'Show all (restore hidden / minimized)',
+              tooltip: 'Show all',
               onTap: onRestoreAll,
             ),
             _LayoutBtn(
               icon: Icons.close_fullscreen,
-              tooltip: 'Close all sub-windows',
+              tooltip: 'Close all',
               onTap: onCloseAll,
             ),
             _LayoutBtn(
               icon: Icons.restart_alt,
-              tooltip: 'Reset OK / ERR counters',
+              tooltip: 'Reset counters',
               onTap: onResetCounters,
             ),
           ],
           const Spacer(),
           Consumer(builder: (context, ref, _) {
-            return TextButton.icon(
-              style:
-                  TextButton.styleFrom(visualDensity: VisualDensity.compact),
-              onPressed: () async {
+            return _MbtButton(
+              kind: _ButtonKind.secondary,
+              icon: Icons.add,
+              label: 'New watch',
+              onTap: () async {
                 final spec = await showDialog<WatchSpec>(
                   context: context,
                   builder: (_) =>
@@ -821,8 +1122,6 @@ class _WatchesToolbar extends StatelessWidget {
                 );
                 if (spec != null) onSelectWatch(spec.id);
               },
-              icon: const Icon(Icons.add, size: 14),
-              label: const Text('New watch', style: TextStyle(fontSize: 12)),
             );
           }),
         ],
@@ -831,28 +1130,56 @@ class _WatchesToolbar extends StatelessWidget {
   }
 }
 
-class _LayoutBtn extends StatelessWidget {
+class _LayoutBtn extends StatefulWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
+  final bool active;
   const _LayoutBtn({
     required this.icon,
     required this.tooltip,
     required this.onTap,
+    this.active = false,
   });
 
   @override
+  State<_LayoutBtn> createState() => _LayoutBtnState();
+}
+
+class _LayoutBtnState extends State<_LayoutBtn> {
+  bool _hover = false;
+  @override
   Widget build(BuildContext context) {
+    final hi = widget.active || _hover;
     return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          width: 28,
-          height: 26,
-          alignment: Alignment.center,
-          child: Icon(icon, size: 16, color: AppColors.textMuted),
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color:
+                  widget.active ? AppColors.accentBg : Colors.transparent,
+              border: Border.all(
+                color: widget.active
+                    ? AppColors.accent
+                    : Colors.transparent,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Icon(
+              widget.icon,
+              size: 13,
+              color: hi ? AppColors.accent : AppColors.textMuted,
+            ),
+          ),
         ),
       ),
     );
@@ -860,18 +1187,28 @@ class _LayoutBtn extends StatelessWidget {
 }
 
 class _EmptyHint extends StatelessWidget {
-  const _EmptyHint();
+  // Constructor is intentionally non-const — see the note at the
+  // `_EmptyHint()` use sites. Allowing const construction would let
+  // Flutter short-circuit theme-flip rebuilds for this subtree because
+  // canonical const instances are `identical()` and the element diff
+  // skips them.
+  // ignore: prefer_const_constructors_in_immutables
+  _EmptyHint();
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.cable, size: 48, color: AppColors.textMuted),
-          SizedBox(height: 16),
-          Text('Select or add a device to start',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
-        ],
+    return Container(
+      color: AppColors.bg1,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cable, size: 48, color: AppColors.textMuted),
+            const SizedBox(height: 16),
+            Text('Select or add a device to start',
+                style: AppType.bodySm
+                    .copyWith(color: AppColors.textMuted)),
+          ],
+        ),
       ),
     );
   }
@@ -886,9 +1223,15 @@ class _DeviceHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cfg = detail.config;
-    return Padding(
+    final conn = detail.conn;
+    final lastError = conn == DeviceConnState.error
+        ? ref.read(deviceHubProvider).device(cfg.id)?.lastError
+        : null;
+    return Container(
+      color: AppColors.bg2,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Column(
@@ -897,88 +1240,133 @@ class _DeviceHeader extends ConsumerWidget {
                 Row(
                   children: [
                     Text(cfg.name,
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        )),
-                    const SizedBox(width: 12),
-                    ConnIndicator(
-                        state: detail.conn,
-                        showLabel: true,
-                        dotSize: 10),
+                        style: AppType.display
+                            .copyWith(color: AppColors.text)),
+                    const SizedBox(width: 10),
+                    ConnIndicator(state: conn, showLabel: true, dotSize: 9),
                   ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 6),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _TransportChip(tag: cfg.transportTag),
-                    const SizedBox(width: 6),
-                    Text(cfg.addressLine,
-                        style: const TextStyle(
-                            color: AppColors.textMuted, fontSize: 11)),
+                    _TransportChip(
+                      tag: cfg.transportTag,
+                      withAddress: true,
+                      address: cfg.addressLine,
+                    ),
+                    if (lastError != null) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 11, color: AppColors.error),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(lastError,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppType.caption
+                                      .copyWith(color: AppColors.error)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-                if (detail.conn == DeviceConnState.error)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      ref
-                              .read(deviceHubProvider)
-                              .device(cfg.id)
-                              ?.lastError ??
-                          'Connection failed',
-                      style: const TextStyle(
-                          color: AppColors.connError, fontSize: 11),
-                    ),
-                  ),
               ],
             ),
           ),
-          OutlinedButton(
-            onPressed: detail.conn == DeviceConnState.connected
-                ? () => ref
-                    .read(deviceConnProvider.notifier)
-                    .disconnect(cfg.id)
-                : detail.conn == DeviceConnState.connecting
-                    ? null
-                    : () => ref
-                        .read(deviceConnProvider.notifier)
-                        .connect(cfg.id),
-            child: Text(
-              detail.conn == DeviceConnState.connected
-                  ? 'Disconnect'
-                  : 'Connect',
-            ),
-          ),
+          const SizedBox(width: 12),
+          _ConnectButton(detail: detail),
         ],
       ),
     );
   }
 }
 
+class _ConnectButton extends ConsumerWidget {
+  final DeviceDetail detail;
+  const _ConnectButton({required this.detail});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final conn = detail.conn;
+    final id = detail.config.id;
+    final notifier = ref.read(deviceConnProvider.notifier);
+    switch (conn) {
+      case DeviceConnState.connected:
+        return _MbtButton(
+          kind: _ButtonKind.outline,
+          icon: Icons.link_off,
+          label: 'Disconnect',
+          onTap: () => notifier.disconnect(id),
+        );
+      case DeviceConnState.connecting:
+        return _MbtButton(
+          kind: _ButtonKind.secondary,
+          label: 'Connecting…',
+          disabled: true,
+        );
+      case DeviceConnState.disconnected:
+      case DeviceConnState.error:
+        return _MbtButton(
+          kind: _ButtonKind.primary,
+          icon: Icons.power_settings_new,
+          label: 'Connect',
+          onTap: () => notifier.connect(id),
+        );
+    }
+  }
+}
+
+/// Transport chip with optional mono-formatted address suffix.
 class _TransportChip extends StatelessWidget {
   final String tag;
-  const _TransportChip({required this.tag});
+  final bool withAddress;
+  final String? address;
+  const _TransportChip({
+    required this.tag,
+    this.withAddress = false,
+    this.address,
+  });
+
+  IconData get _icon =>
+      tag == 'TCP' ? Icons.lan_outlined : Icons.usb;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      height: withAddress ? 20 : 16,
+      padding: EdgeInsets.symmetric(
+          horizontal: withAddress ? 6 : 4, vertical: 0),
       decoration: BoxDecoration(
-        color: AppColors.bg,
+        color: AppColors.bg2,
+        border: Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(2),
-        border: Border.all(color: AppColors.border, width: 0.5),
       ),
-      child: Text(
-        tag,
-        style: const TextStyle(
-          fontSize: 9,
-          fontWeight: FontWeight.w600,
-          color: AppColors.textMuted,
-          letterSpacing: 0.5,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_icon, size: 10, color: AppColors.textMuted),
+          const SizedBox(width: 4),
+          Text(
+            tag,
+            style: AppType.labelSm.copyWith(
+              fontSize: withAddress ? 10 : 9,
+              color: AppColors.text,
+            ),
+          ),
+          if (withAddress && address != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              address!,
+              style: AppType.monoSm.copyWith(color: AppColors.textMuted),
+            ),
+          ],
+        ],
       ),
     );
   }

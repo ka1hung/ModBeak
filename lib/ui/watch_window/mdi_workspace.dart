@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/runtime/device_hub.dart';
 import '../../data/models/watch_spec.dart';
 import '../../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/brand.dart';
+import '../widgets/conn_indicator.dart';
 import 'watch_pane.dart';
 
 /// MDI-style workspace that hosts every [WatchSpec] of the current device as
@@ -27,13 +30,14 @@ class MdiWorkspace extends ConsumerStatefulWidget {
 }
 
 class MdiWorkspaceState extends ConsumerState<MdiWorkspace> {
-  static const double _defaultW = 420;
-  static const double _defaultH = 280;
+  static const double _defaultW = 460;
+  static const double _defaultH = 320;
   static const double _cascadeStep = 28;
   static const double _minW = 280;
   static const double _minH = 140;
-  static const double _titleBarHeight = 26;
-  static const double _minimizedStripHeight = 30;
+  // The pane header (in watch_pane.dart) is now the drag handle.
+  static const double _titleBarHeight = 30;
+  static const double _minimizedStripHeight = 28;
 
   Size? _lastBounds;
 
@@ -210,7 +214,7 @@ class MdiWorkspaceState extends ConsumerState<MdiWorkspace> {
       return Container(
         color: AppColors.bg,
         alignment: Alignment.center,
-        child: const Padding(
+        child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
             'No watches on this device yet.\nClick "+ New watch" to add one.',
@@ -236,8 +240,13 @@ class MdiWorkspaceState extends ConsumerState<MdiWorkspace> {
       final stackBounds = Size(constraints.maxWidth, stackHeight);
       _lastBounds = stackBounds;
 
+      final focusedId = z.isEmpty ? null : z.last;
+
       return Container(
-        color: AppColors.bg,
+        decoration: BoxDecoration(
+          color: AppColors.bg1,
+          backgroundBlendMode: BlendMode.srcOver,
+        ),
         child: Column(
           children: [
             SizedBox(
@@ -258,6 +267,7 @@ class MdiWorkspaceState extends ConsumerState<MdiWorkspace> {
                         minW: _minW,
                         minH: _minH,
                         titleBarHeight: _titleBarHeight,
+                        isFocused: id == focusedId,
                         onFocus: () => _bringToFront(id),
                         // Drag / resize callbacks emit RAW DELTAS rather than
                         // an absolute rect — `onPanUpdate` can fire several
@@ -298,6 +308,7 @@ class _MdiWindow extends StatelessWidget {
   final MdiWindowSlot slot;
   final Size bounds;
   final double minW, minH, titleBarHeight;
+  final bool isFocused;
   final VoidCallback onFocus;
   final ValueChanged<Offset> onDragDelta;
   final ValueChanged<Offset> onResizeDelta;
@@ -313,6 +324,7 @@ class _MdiWindow extends StatelessWidget {
     required this.minW,
     required this.minH,
     required this.titleBarHeight,
+    required this.isFocused,
     required this.onFocus,
     required this.onDragDelta,
     required this.onResizeDelta,
@@ -320,24 +332,6 @@ class _MdiWindow extends StatelessWidget {
     required this.onToggleMaximize,
     required this.onClose,
   });
-
-  String get _fcLabel {
-    switch (spec.functionCode) {
-      case 1:
-        return 'FC01 Coils';
-      case 2:
-        return 'FC02 DI';
-      case 3:
-        return 'FC03 HR';
-      case 4:
-        return 'FC04 IR';
-      default:
-        return 'FC${spec.functionCode}';
-    }
-  }
-
-  String get _title =>
-      '$_fcLabel · ${spec.startAddress}–${spec.startAddress + spec.quantity - 1}';
 
   @override
   Widget build(BuildContext context) {
@@ -359,202 +353,51 @@ class _MdiWindow extends StatelessWidget {
       height: clampedH,
       child: Listener(
         onPointerDown: (_) => onFocus(),
-        child: Container(
+        child: DecoratedBox(
           decoration: BoxDecoration(
-            color: AppColors.panel,
             borderRadius:
-                isMax ? BorderRadius.zero : BorderRadius.circular(4),
-            border: Border.all(color: AppColors.border),
+                isMax ? BorderRadius.zero : BorderRadius.circular(3),
             boxShadow: isMax
                 ? const []
-                : const [
+                : [
                     BoxShadow(
-                      blurRadius: 8,
-                      color: Color(0x55000000),
-                      offset: Offset(0, 3),
+                      blurRadius: 24,
+                      spreadRadius: -6,
+                      color: const Color(0xFF000000).withValues(alpha: 0.6),
+                      offset: const Offset(0, 8),
+                    ),
+                    BoxShadow(
+                      blurRadius: 6,
+                      color: const Color(0xFF000000).withValues(alpha: 0.4),
+                      offset: const Offset(0, 2),
                     ),
                   ],
           ),
-          child: Column(
+          child: Stack(
             children: [
-              _TitleBar(
-                title: _title,
-                height: titleBarHeight,
-                isMaximized: isMax,
-                onDoubleTap: onToggleMaximize,
-                onDrag: isMax ? null : onDragDelta,
-                onMinimize: onMinimize,
-                onToggleMaximize: onToggleMaximize,
-                onClose: onClose,
-              ),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: ClipRRect(
-                        borderRadius: isMax
-                            ? BorderRadius.zero
-                            : const BorderRadius.only(
-                                bottomLeft: Radius.circular(3),
-                                bottomRight: Radius.circular(3),
-                              ),
-                        child: WatchPane(spec: spec),
-                      ),
-                    ),
-                    if (!isMax)
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: _ResizeHandle(onDrag: onResizeDelta),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TitleBar extends StatelessWidget {
-  final String title;
-  final double height;
-  final bool isMaximized;
-  final ValueChanged<Offset>? onDrag;
-  final VoidCallback onDoubleTap;
-  final VoidCallback onMinimize;
-  final VoidCallback onToggleMaximize;
-  final VoidCallback onClose;
-
-  const _TitleBar({
-    required this.title,
-    required this.height,
-    required this.isMaximized,
-    required this.onDrag,
-    required this.onDoubleTap,
-    required this.onMinimize,
-    required this.onToggleMaximize,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: height,
-      decoration: const BoxDecoration(
-        color: AppColors.bgRaised,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(3),
-          topRight: Radius.circular(3),
-        ),
-        border: Border(
-          bottom: BorderSide(color: AppColors.border, width: 0.5),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Drag handle area — title text. Window controls stay
-          // outside the GestureDetector so taps reach them.
-          Expanded(
-            child: MouseRegion(
-              cursor: onDrag == null
-                  ? SystemMouseCursors.basic
-                  : SystemMouseCursors.move,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanUpdate:
-                    onDrag == null ? null : (d) => onDrag!(d.delta),
-                onDoubleTap: onDoubleTap,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.drag_indicator,
-                          size: 12, color: AppColors.textMuted),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.text,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: isMax
+                      ? BorderRadius.zero
+                      : BorderRadius.circular(2),
+                  child: WatchPane(
+                    spec: spec,
+                    active: isFocused,
+                    isMaximized: isMax,
+                    onDragDelta: isMax ? null : onDragDelta,
+                    onMinimize: onMinimize,
+                    onToggleMaximize: onToggleMaximize,
+                    onClose: onClose,
                   ),
                 ),
               ),
-            ),
-          ),
-          _WinBtn(
-            icon: Icons.minimize,
-            tooltip: 'Minimize',
-            onTap: onMinimize,
-          ),
-          _WinBtn(
-            icon: isMaximized
-                ? Icons.filter_none_outlined
-                : Icons.crop_square,
-            tooltip: isMaximized ? 'Restore' : 'Maximize',
-            onTap: onToggleMaximize,
-          ),
-          _WinBtn(
-            icon: Icons.close,
-            tooltip: 'Close',
-            onTap: onClose,
-            hoverColor: AppColors.danger,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WinBtn extends StatefulWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-  final Color? hoverColor;
-  const _WinBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.hoverColor,
-  });
-
-  @override
-  State<_WinBtn> createState() => _WinBtnState();
-}
-
-class _WinBtnState extends State<_WinBtn> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final hi = widget.hoverColor ?? AppColors.brand;
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: Container(
-            width: 28,
-            height: double.infinity,
-            color: _hover ? hi.withValues(alpha: 0.16) : null,
-            child: Icon(
-              widget.icon,
-              size: 12,
-              color: _hover ? hi : AppColors.textMuted,
-            ),
+              if (!isMax)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: _ResizeHandle(onDrag: onResizeDelta),
+                ),
+            ],
           ),
         ),
       ),
@@ -573,7 +416,7 @@ class _ResizeHandle extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (d) => onDrag(d.delta),
-        child: const SizedBox(
+        child: SizedBox(
           width: 18,
           height: 18,
           child: Padding(
@@ -587,7 +430,7 @@ class _ResizeHandle extends StatelessWidget {
   }
 }
 
-class _MinimizedStrip extends StatelessWidget {
+class _MinimizedStrip extends ConsumerWidget {
   final double height;
   final List<WatchSpec> watches;
   final ValueChanged<String> onRestore;
@@ -607,61 +450,81 @@ class _MinimizedStrip extends StatelessWidget {
       4 => 'FC04',
       _ => 'FC${s.functionCode}',
     };
-    return '$fc ${s.startAddress}–${s.startAddress + s.quantity - 1}';
+    return '$fc · ${s.startAddress}–${s.startAddress + s.quantity - 1}';
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final conns = ref.watch(deviceConnProvider);
     return Container(
       height: height,
-      decoration: const BoxDecoration(
-        color: AppColors.bgRaised,
-        border: Border(
-          top: BorderSide(color: AppColors.border, width: 0.5),
-        ),
+      decoration: BoxDecoration(
+        color: AppColors.bg3,
+        border: Border(top: BorderSide(color: AppColors.border)),
       ),
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        itemCount: watches.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 4),
-        itemBuilder: (_, i) {
-          final w = watches[i];
-          return InkWell(
-            onTap: () => onRestore(w.id),
-            borderRadius: BorderRadius.circular(3),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.panel,
-                border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.web_asset,
-                      size: 12, color: AppColors.textMuted),
-                  const SizedBox(width: 6),
-                  Text(
-                    _label(w),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w500,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount: watches.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 4),
+              itemBuilder: (_, i) {
+                final w = watches[i];
+                final state =
+                    conns[w.deviceId] ?? DeviceConnState.disconnected;
+                return Center(
+                  child: InkWell(
+                    onTap: () => onRestore(w.id),
+                    borderRadius: BorderRadius.circular(2),
+                    child: Container(
+                      height: 20,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.bg2,
+                        border: Border.all(color: AppColors.border),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StatusDot(
+                            status: ConnIndicator.dotFor(state),
+                            size: 6,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _label(w),
+                            style: AppType.monoSm.copyWith(
+                              fontSize: 10,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => onClose(w.id),
+                            child: Icon(Icons.close,
+                                size: 11,
+                                color: AppColors.textMuted),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  GestureDetector(
-                    onTap: () => onClose(w.id),
-                    child: const Icon(Icons.close,
-                        size: 11, color: AppColors.textMuted),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
-          );
-        },
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${watches.length} minimised',
+            style: AppType.caption.copyWith(color: AppColors.textDim),
+          ),
+        ],
       ),
     );
   }

@@ -9,7 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
+  # macOS — Apple Silicon (arm64). `macos-latest` on GitHub-hosted runners
+  # is an M1/M2 image, so this build is natively arm64. Intel-mac users will
+  # need to run via Rosetta until we add a separate x64 job.
+  build-macos-arm64:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,14 +34,15 @@ jobs:
       - name: Package .app into zip
         run: |
           cd build/macos/Build/Products/Release
-          zip -r -y "modbeak-macos-${GITHUB_REF_NAME}.zip" ModBeak.app
+          zip -r -y "modbeak-macos-arm64-${GITHUB_REF_NAME}.zip" ModBeak.app
 
       - uses: actions/upload-artifact@v4
         with:
-          name: modbeak-macos
-          path: build/macos/Build/Products/Release/modbeak-macos-*.zip
+          name: modbeak-macos-arm64
+          path: build/macos/Build/Products/Release/modbeak-macos-arm64-*.zip
 
-  build-windows:
+  # Windows — x64. `windows-latest` is Windows Server 2022 x64.
+  build-windows-x64:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,13 +61,14 @@ jobs:
         run: |
           Compress-Archive `
             -Path build/windows/x64/runner/Release/* `
-            -DestinationPath "modbeak-windows-${env:GITHUB_REF_NAME}.zip"
+            -DestinationPath "modbeak-windows-x64-${env:GITHUB_REF_NAME}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: modbeak-windows
-          path: modbeak-windows-*.zip
+          name: modbeak-windows-x64
+          path: modbeak-windows-x64-*.zip
 
+  # Linux — x64. `ubuntu-latest` is Ubuntu 22.04 x64.
   build-linux-x64:
     runs-on: ubuntu-latest
     steps:
@@ -98,8 +103,8 @@ jobs:
 
   release:
     needs:
-      - build-macos
-      - build-windows
+      - build-macos-arm64
+      - build-windows-x64
       - build-linux-x64
     runs-on: ubuntu-latest
     steps:

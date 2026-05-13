@@ -50,10 +50,12 @@ class AppConfig {
 /// can copy it between machines, version-control it, or hand-edit when
 /// debugging.
 ///
-/// Resolved location per OS (with `<bundle>` = `com.ka1hung.modbeak`):
-/// - macOS (sandboxed): `~/Library/Containers/<bundle>/Data/Library/Application Support/<bundle>/config.json`
-/// - Windows: `C:\Users\<you>\AppData\Roaming\com.ka1hung\modbeak\config.json`
-/// - Linux: `~/.local/share/modbeak/config.json`
+/// Resolved location per OS (bundle id = `com.ka1hung.modbeak`, app is
+/// distributed unsandboxed on macOS — see `macos/Runner/*.entitlements`):
+/// - macOS: `~/Library/Application Support/com.ka1hung.modbeak/config.json`
+/// - Windows: `%APPDATA%\com.ka1hung\modbeak\config.json`
+///            (i.e. `C:\Users\<you>\AppData\Roaming\com.ka1hung\modbeak\config.json`)
+/// - Linux: `~/.local/share/modbeak/config.json` (honours `$XDG_DATA_HOME`)
 /// - iOS / Android: app-private sandbox (not user-visible).
 class ConfigStore {
   /// Legacy SharedPreferences key — kept only so we can migrate any

@@ -14,11 +14,23 @@ class MbtApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ModBeak',
-      debugShowCheckedModeBanner: false,
-      theme: buildDarkTheme(),
-      home: const MainWindow(),
+    return ValueListenableBuilder<AppThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (_, mode, _) {
+        // `home: MainWindow()` is intentionally NOT const. Flutter's element
+        // diff skips updates when the new child widget is `identical()` to
+        // the old one, and `const MainWindow()` always resolves to the same
+        // canonical instance — so without this, MaterialApp would rebuild
+        // with the new theme but MainWindow's subtree (which reads
+        // `AppColors.*` getters) would never re-run its build, leaving the
+        // bulk of the UI stuck on the old palette.
+        return MaterialApp(
+          title: 'ModBeak',
+          debugShowCheckedModeBanner: false,
+          theme: buildAppTheme(mode),
+          home: MainWindow(),
+        );
+      },
     );
   }
 }

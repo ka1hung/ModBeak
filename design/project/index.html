@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ModBeak — GUI design</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" />
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0a0f14;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    color: #e6edf3;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  * { box-sizing: border-box; }
+  button { font-family: inherit; }
+  input, select { font-family: inherit; }
+  @keyframes mbtoolSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  /* design-canvas surface */
+  .dc-canvas-bg { background: #0a0f14 !important; }
+</style>
+<script type="application/json" id="bundler-meta">{"viewport":{"width":1600}}</script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <!-- Component layers -->
+  <script type="text/babel" src="tokens.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="cockatiel.jsx"></script>
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="watch-views.jsx"></script>
+  <script type="text/babel" src="dialogs.jsx"></script>
+  <script type="text/babel" src="app-shell.jsx"></script>
+  <script type="text/babel" src="full-app.jsx"></script>
+  <script type="text/babel" src="sheets.jsx"></script>
+
+  <!-- Design canvas + tweaks panel -->
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+
+  <!-- Main app -->
+  <script type="text/babel">
+    const { useState } = React;
+
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "theme": "light",
+      "cellStyle": "borderless",
+      "paneChrome": "flat",
+      "density": "tight"
+    }/*EDITMODE-END*/;
+
+    // Theme palettes — each is a partial override of T.
+    const THEMES = {
+      dark: { /* baseline already in tokens.jsx */ },
+      hc: {
+        bg0:'#000000', bg1:'#050505', bg2:'#0d0d0d', bg3:'#181818', bg4:'#242424',
+        bgSelected:'#003040',
+        border:'#404040', borderStrong:'#666666', borderFaint:'#262626',
+        text:'#ffffff', textMuted:'#cccccc', textDim:'#999999', textFaint:'#666666',
+        accent:'#4fc3f7', accentDim:'#2a90c0', accentBg:'#002a3a',
+        online:'#76ff03', onlineDim:'#5fcc02', onlineBg:'#0d2400',
+        connecting:'#ffc107', connectingDim:'#c89400', connectingBg:'#2a1f00',
+        error:'#ff5252', errorDim:'#c8383a', errorBg:'#2a0808',
+        offline:'#888888', offlineBg:'#1a1a1a',
+        warn:'#ffc107', warnBg:'#2a1f00',
+        tx:'#ffc107', rx:'#4fc3f7',
+        onAccent:'#000000', onOnline:'#000000', onError:'#000000',
+      },
+      light: {
+        bg0:'#f5f3ef', bg1:'#ffffff', bg2:'#fafaf7', bg3:'#f0ede8', bg4:'#e4e0d8',
+        bgSelected:'#d6ecf5',
+        border:'#d4cfc6', borderStrong:'#b0aaa0', borderFaint:'#ece8e0',
+        text:'#1a1f24', textMuted:'#525c66', textDim:'#7a8390', textFaint:'#a8aeb5',
+        accent:'#0277a8', accentDim:'#015a82', accentBg:'#cde9f5',
+        online:'#3d7a16', onlineDim:'#2c5a10', onlineBg:'#e3edd0',
+        connecting:'#a05c08', connectingDim:'#7a4406', connectingBg:'#faecd0',
+        error:'#b8262e', errorDim:'#8e1c22', errorBg:'#f5d8da',
+        offline:'#8a9099', offlineBg:'#ece8e0',
+        warn:'#a05c08', warnBg:'#faecd0',
+        tx:'#a05c08', rx:'#0277a8',
+        onAccent:'#ffffff', onOnline:'#ffffff', onError:'#ffffff',
+        fmtNum:'#3d7a16', fmtHex:'#0277a8', fmtBin:'#7a3aa0', fmtFloat:'#a05c08',
+        fmtAscii:'#0a7066', fmtBool:'#b8262e',
+      },
+    };
+    const BASE_T = { ...T };
+    function applyTheme(name) {
+      Object.assign(T, BASE_T);
+      if (THEMES[name]) Object.assign(T, THEMES[name]);
+      document.body.style.background = T.bg0;
+      document.body.style.color = T.text;
+    }
+
+    function ArtboardFrame({ width, height, padding = 0, children }) {
+      return (
+        <div style={{
+          width, height,
+          background: T.bg1,
+          color: T.text,
+          fontFamily: FONT_SANS,
+          padding,
+          overflow: 'hidden',
+        }}>{children}</div>
+      );
+    }
+
+    function DialogStage({ width = 600, height = 520, children }) {
+      return (
+        <div style={{
+          width, height,
+          background: T.bg0,
+          backgroundImage: `radial-gradient(${T.borderFaint} 1px, transparent 1px)`,
+          backgroundSize: '20px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 24,
+        }}>{children}</div>
+      );
+    }
+
+    function PaneStage({ width, height, children, label }) {
+      return (
+        <div style={{
+          width, height,
+          background: T.bg1,
+          backgroundImage: `radial-gradient(${T.borderFaint} 1px, transparent 1px)`,
+          backgroundSize: '20px 20px',
+          padding: 20,
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        }}>{children}</div>
+      );
+    }
+
+    function App() {
+      const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+      const { theme, cellStyle, paneChrome, density } = t;
+      const elevated = paneChrome === 'elevated';
+      React.useLayoutEffect(() => { applyTheme(theme); }, [theme]);
+
+      return (
+        <>
+          <DesignCanvas>
+            {/* 1. Overview — full 1440x900 commissioning mockup */}
+            <DCSection
+              id="overview"
+              title="Overview — 1440 × 900 commissioning scenario"
+              subtitle="PLC online · AC Drive in error · ESP32 connecting · IO module offline · packet log showing an exception · cell mid-write"
+            >
+              <DCArtboard id="full-app" label="Full app · Sidebar + Header + 3 panes + minimised strip" width={1440} height={900}>
+                <FullAppMockup cellStyle={cellStyle} paneChrome={paneChrome} density={density} theme={theme} onToggleTheme={() => setTweak('theme', theme === 'light' ? 'dark' : 'light')} />
+              </DCArtboard>
+            </DCSection>
+
+            {/* 2. Watch panes detail */}
+            <DCSection
+              id="watch-panes"
+              title="Watch pane — the three views"
+              subtitle="Same pane chrome, three tabs: Table (high-density numbers), Comm (TX/RX log), Errors"
+            >
+              <DCArtboard id="pane-table-u16" label="Table · UInt16 · 32 cells" width={500} height={400}>
+                <PaneStage width={500} height={400}>
+                  <Pane width={460} height={360} elevated={elevated} active>
+                    <PaneHeader status="online" title="PLC-Line-A · FC03 · 100–131 · 500ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS'}]} activeTab="t"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconSplit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <FormatBar format="UInt16" polling="live" />
+                    <TableView format="UInt16" cellStyle={cellStyle} density={density} startAddr={100} count={32} />
+                    <PaneFooter ok={1284} err={0} avg={13} />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+
+              <DCArtboard id="pane-table-hex" label="Table · Hex" width={500} height={400}>
+                <PaneStage width={500} height={400}>
+                  <Pane width={460} height={360} elevated={elevated}>
+                    <PaneHeader status="online" title="PLC-Line-A · FC03 · 100–131 · 500ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS'}]} activeTab="t"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <FormatBar format="Hex" polling="live" />
+                    <TableView format="Hex" cellStyle={cellStyle} density={density} startAddr={100} count={32} errorAddrs={[115]} />
+                    <PaneFooter ok={1284} err={2} avg={13} lastError="CRC mismatch on register 115" />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+
+              <DCArtboard id="pane-table-bin" label="Table · Binary" width={520} height={400}>
+                <PaneStage width={520} height={400}>
+                  <Pane width={480} height={360} elevated={elevated}>
+                    <PaneHeader status="online" title="AC Drive · FC03 · 40001–40016 · 500ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS'}]} activeTab="t"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <FormatBar format="Binary" polling="live" />
+                    <TableView format="Binary" cellStyle={cellStyle} density={density} startAddr={40001} count={16} />
+                    <PaneFooter ok={920} err={0} avg={14} />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+
+              <DCArtboard id="pane-table-bool" label="Table · Bool (FC01) — pill cells" width={500} height={360}>
+                <PaneStage width={500} height={360}>
+                  <Pane width={460} height={320} elevated={elevated}>
+                    <PaneHeader status="online" title="PLC-Line-A · FC01 · 1–32 · 500ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS'}]} activeTab="t"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <FormatBar format="Bool" polling="live" locked />
+                    <TableView format="Bool" cellStyle={cellStyle} density={density} startAddr={1} count={32} writingAddrs={[5]} />
+                    <PaneFooter ok={2104} err={0} avg={11} />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+
+              <DCArtboard id="pane-comm" label="Comm · packet log (Wireshark-style)" width={580} height={460}>
+                <PaneStage width={580} height={460}>
+                  <Pane width={540} height={420} elevated={elevated}>
+                    <PaneHeader status="online" title="PLC-Line-A · FC03 · 100–131 · 500ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS',badge:1}]} activeTab="c"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <CommView />
+                    <PaneFooter ok={642} err={1} avg={14} lastError="exception 02 — illegal data address" />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+
+              <DCArtboard id="pane-errors" label="Errors · structured log" width={580} height={360}>
+                <PaneStage width={580} height={360}>
+                  <Pane width={540} height={320} elevated={elevated}>
+                    <PaneHeader status="error" title="AC Drive · FC03 · 40001–40016 · 1000ms"
+                      tabs={[{id:'t',label:'TABLE'},{id:'c',label:'COMM'},{id:'e',label:'ERRORS',badge:6}]} activeTab="e"
+                      actions={<><IconBtn icon={IconEdit} size={20}/><IconBtn icon={IconMinimise} size={20}/><IconBtn icon={IconMaximise} size={20}/><IconBtn icon={IconClose} size={20}/></>} />
+                    <ErrorsView />
+                    <PaneFooter ok={42} err={6} avg={998} lastError="Connection refused: 192.168.1.42:502" />
+                  </Pane>
+                </PaneStage>
+              </DCArtboard>
+            </DCSection>
+
+            {/* 3. Dialogs */}
+            <DCSection
+              id="dialogs"
+              title="Dialogs"
+              subtitle="Add Device (TCP / RTU), Add Watch, Edit Value, Edit Bits"
+            >
+              <DCArtboard id="dlg-device-tcp" label="Add Device · TCP · test OK" width={600} height={620}>
+                <DialogStage width={600} height={620}><DialogAddDeviceTCP /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-device-rtu" label="Add Device · RTU · test FAIL" width={600} height={680}>
+                <DialogStage width={600} height={680}><DialogAddDeviceRTU /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-watch" label="Add Watch · FC picker" width={620} height={620}>
+                <DialogStage width={620} height={620}><DialogAddWatch /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-edit-value" label="Edit Value · UInt16" width={460} height={300}>
+                <DialogStage width={460} height={300}><DialogEditValue format="UInt16" /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-edit-value-hex" label="Edit Value · Hex" width={460} height={300}>
+                <DialogStage width={460} height={300}><DialogEditValue format="Hex" /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-edit-value-float" label="Edit Value · Float32" width={460} height={300}>
+                <DialogStage width={460} height={300}><DialogEditValue format="Float32" /></DialogStage>
+              </DCArtboard>
+              <DCArtboard id="dlg-edit-bits" label="Edit Bits · 16 checkboxes" width={600} height={520}>
+                <DialogStage width={600} height={520}><DialogEditBits /></DialogStage>
+              </DCArtboard>
+            </DCSection>
+
+            {/* 4. Component states */}
+            <DCSection
+              id="states"
+              title="Component states"
+              subtitle="Empty · loading · live · warn · error · disabled — colour-blind safe via shape + colour"
+            >
+              <DCArtboard id="states-all" label="States matrix" width={1080} height={1180}>
+                <ArtboardFrame width={1080} height={1180}><StatesSheet /></ArtboardFrame>
+              </DCArtboard>
+            </DCSection>
+
+            {/* 5. Icons */}
+            <DCSection
+              id="icons"
+              title="Icon set — all categories"
+              subtitle="Stroke 1.5 · sharp · two sizes shown (14 px / 20 px) · filename per file"
+            >
+              <DCArtboard id="icon-sheet" label="Full icon sheet" width={920} height={1640}>
+                <ArtboardFrame width={920} height={1640}><IconSheet /></ArtboardFrame>
+              </DCArtboard>
+            </DCSection>
+
+            {/* 6. Tokens & type */}
+            <DCSection
+              id="tokens"
+              title="Design tokens"
+              subtitle="Semantic naming · colour-blind safe palette · IBM Plex pairing"
+            >
+              <DCArtboard id="token-sheet" label="Colours + type scale" width={920} height={840}>
+                <ArtboardFrame width={920} height={840}><TokenSheet /></ArtboardFrame>
+              </DCArtboard>
+            </DCSection>
+
+            {/* 7. App icon */}
+            <DCSection
+              id="app-icon"
+              title="App icon — Windows / macOS / Linux"
+              subtitle="3 corner-radius variants · readable down to 16 px"
+            >
+              <DCArtboard id="app-icon-sheet" label="App icon variants + size grid" width={760} height={780}>
+                <ArtboardFrame width={760} height={780}><AppIconSheet /></ArtboardFrame>
+              </DCArtboard>
+            </DCSection>
+          </DesignCanvas>
+
+          <TweaksPanel title="Tweaks">
+            <TweakSection label="Theme">
+              <TweakRadio
+                value={theme === 'light' ? 'light' : 'dark'}
+                onChange={(v) => setTweak('theme', v)}
+                options={[
+                  { value: 'dark', label: 'Dark' },
+                  { value: 'light', label: 'Light' },
+                ]}
+              />
+            </TweakSection>
+            <TweakSection label="Cell style — Table view">
+              <TweakRadio
+                value={cellStyle}
+                onChange={(v) => setTweak('cellStyle', v)}
+                options={[
+                  { value: 'borderless', label: 'None' },
+                  { value: 'grid', label: 'Grid' },
+                  { value: 'zebra', label: 'Zebra' },
+                ]}
+              />
+            </TweakSection>
+            <TweakSection label="Pane chrome">
+              <TweakRadio
+                value={paneChrome}
+                onChange={(v) => setTweak('paneChrome', v)}
+                options={[
+                  { value: 'flat', label: 'Flat' },
+                  { value: 'elevated', label: 'Elevated' },
+                ]}
+              />
+            </TweakSection>
+            <TweakSection label="Density">
+              <TweakRadio
+                value={density}
+                onChange={(v) => setTweak('density', v)}
+                options={[
+                  { value: 'tight', label: 'Desktop' },
+                  { value: 'touch', label: 'Touch' },
+                ]}
+              />
+            </TweakSection>
+          </TweaksPanel>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

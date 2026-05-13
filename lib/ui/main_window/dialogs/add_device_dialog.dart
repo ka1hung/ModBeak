@@ -226,112 +226,141 @@ class _AddDeviceDialogState extends ConsumerState<AddDeviceDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final screen = MediaQuery.of(context).size;
+    // Cap the dialog at 90% of the screen so it scrolls instead of overflowing
+    // when the window is short (the previous Column had no scroll, which
+    // caused the 29-pixel overflow visible in the screenshot).
     return Dialog(
       backgroundColor: AppColors.panel,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(widget.edit == null ? 'New Device' : 'Edit Device',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 16),
-              _TransportToggle(
-                value: _transport,
-                onChanged: (t) => setState(() {
-                  _transport = t;
-                  _testStatus = null;
-                }),
+        constraints: BoxConstraints(
+          maxWidth: 520,
+          maxHeight: screen.height * 0.9,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Text(
+                widget.edit == null ? 'New Device' : 'Edit Device',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              const SizedBox(height: 12),
-              _Field(label: 'Name', controller: _name),
-              const SizedBox(height: 8),
-              if (_transport == ModbusTransport.tcp) ..._tcpFields(),
-              if (_transport == ModbusTransport.rtu) ..._rtuFields(),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _Field(
-                      label: 'Poll interval (ms)',
-                      controller: _pollInterval,
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _TransportToggle(
+                      value: _transport,
+                      onChanged: (t) => setState(() {
+                        _transport = t;
+                        _testStatus = null;
+                      }),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child:
-                        _Field(label: 'Min request gap (ms)', controller: _gap),
-                  ),
-                ],
-              ),
-              const Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text(
-                  'Poll interval = whole-device cycle. Each cycle queries '
-                  'every watch in sequence, separated by Min request gap.',
-                  style:
-                      TextStyle(fontSize: 11, color: AppColors.textMuted),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_transport == ModbusTransport.tcp)
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: _serialize,
-                  onChanged: (v) => setState(() => _serialize = v ?? false),
-                  title: const Text('Serialize requests',
-                      style: TextStyle(fontSize: 13)),
-                  subtitle: const Text(
-                      'One in-flight request at a time. On by default — most '
-                      'slaves expect this.',
-                      style:
-                          TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                ),
-              if (_transport == ModbusTransport.rtu)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    'RTU is half-duplex — requests are always serialized.',
-                    style:
-                        TextStyle(fontSize: 11, color: AppColors.textMuted),
-                  ),
-                ),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: _autoReconnect,
-                onChanged: (v) => setState(() => _autoReconnect = v ?? true),
-                title: const Text('Auto-reconnect',
-                    style: TextStyle(fontSize: 13)),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  OutlinedButton(
-                    onPressed: _testConnection,
-                    child: const Text('Test'),
-                  ),
-                  const SizedBox(width: 12),
-                  if (_testStatus != null)
-                    Expanded(
-                      child: Text(
-                        _testStatus!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _testOk ? AppColors.brand : AppColors.danger,
+                    const SizedBox(height: 12),
+                    _Field(label: 'Name', controller: _name),
+                    const SizedBox(height: 8),
+                    if (_transport == ModbusTransport.tcp) ..._tcpFields(),
+                    if (_transport == ModbusTransport.rtu) ..._rtuFields(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _Field(
+                            label: 'Poll interval (ms)',
+                            controller: _pollInterval,
+                          ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _Field(
+                              label: 'Min request gap (ms)',
+                              controller: _gap),
+                        ),
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Poll interval = whole-device cycle. Each cycle queries '
+                        'every watch in sequence, separated by Min request gap.',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textMuted),
                       ),
                     ),
-                ],
+                    const SizedBox(height: 12),
+                    if (_transport == ModbusTransport.tcp)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: _serialize,
+                        onChanged: (v) =>
+                            setState(() => _serialize = v ?? false),
+                        title: const Text('Serialize requests',
+                            style: TextStyle(fontSize: 13)),
+                        subtitle: Text(
+                          'One in-flight request at a time. On by default — '
+                          'most slaves expect this.',
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.textMuted),
+                        ),
+                      ),
+                    if (_transport == ModbusTransport.rtu)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Text(
+                          'RTU is half-duplex — requests are always serialized.',
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.textMuted),
+                        ),
+                      ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: _autoReconnect,
+                      onChanged: (v) =>
+                          setState(() => _autoReconnect = v ?? true),
+                      title: const Text('Auto-reconnect',
+                          style: TextStyle(fontSize: 13)),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: _testConnection,
+                          child: const Text('Test'),
+                        ),
+                        const SizedBox(width: 12),
+                        if (_testStatus != null)
+                          Expanded(
+                            child: Text(
+                              _testStatus!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _testOk
+                                    ? AppColors.brand
+                                    : AppColors.danger,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              Row(
+            ),
+            Container(height: 1, color: AppColors.border),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
@@ -341,12 +370,13 @@ class _AddDeviceDialogState extends ConsumerState<AddDeviceDialog> {
                   const SizedBox(width: 8),
                   FilledButton(
                     onPressed: _save,
-                    child: Text(widget.edit == null ? 'Save' : 'Update'),
+                    child:
+                        Text(widget.edit == null ? 'Save' : 'Update'),
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -484,7 +514,7 @@ class _PortDropdown extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Serial port',
+        Text('Serial port',
             style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
         const SizedBox(height: 4),
         Row(
@@ -498,7 +528,7 @@ class _PortDropdown extends StatelessWidget {
                   isExpanded: true,
                   hint: Text(
                     choices.isEmpty ? 'No ports detected' : 'Select port',
-                    style: const TextStyle(
+                    style:  TextStyle(
                         fontSize: 12, color: AppColors.textMuted),
                   ),
                   items: choices
@@ -525,11 +555,11 @@ class _PortDropdown extends StatelessWidget {
                     fillColor: AppColors.bg,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(4),
-                      borderSide: const BorderSide(color: AppColors.border),
+                      borderSide:  BorderSide(color: AppColors.border),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(4),
-                      borderSide: const BorderSide(color: AppColors.border),
+                      borderSide:  BorderSide(color: AppColors.border),
                     ),
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -571,7 +601,7 @@ class _DropdownField<T> extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(
+            style:  TextStyle(
                 fontSize: 11, color: AppColors.textMuted)),
         const SizedBox(height: 4),
         SizedBox(
@@ -582,18 +612,18 @@ class _DropdownField<T> extends StatelessWidget {
             isExpanded: true,
             items: items,
             onChanged: onChanged,
-            style: const TextStyle(fontSize: 12, color: AppColors.text),
+            style:  TextStyle(fontSize: 12, color: AppColors.text),
             decoration: InputDecoration(
               isDense: true,
               filled: true,
               fillColor: AppColors.bg,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -616,7 +646,7 @@ class _Field extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(
+            style:  TextStyle(
                 fontSize: 11, color: AppColors.textMuted)),
         const SizedBox(height: 4),
         SizedBox(
@@ -630,15 +660,15 @@ class _Field extends StatelessWidget {
               fillColor: AppColors.bg,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.brand),
+                borderSide:  BorderSide(color: AppColors.brand),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 6),

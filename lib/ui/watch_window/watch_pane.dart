@@ -11,11 +11,12 @@ import '../../data/models/watch_spec.dart';
 import '../../state/app_state.dart';
 import '../main_window/dialogs/add_watch_dialog.dart';
 import '../theme/app_theme.dart';
+import '../widgets/brand.dart';
 import '../widgets/conn_indicator.dart';
 
 enum PaneView { table, comm, errors }
 
-/// Watch Pane — see GUI.md §S2a.
+/// Watch Pane — one MDI sub-window bound to a single [WatchSpec].
 ///
 /// One pane shows ONE poll target. The user toggles between:
 ///   * **Table** — smart multi-column grid of address/value pairs.
@@ -27,12 +28,32 @@ class WatchPane extends ConsumerStatefulWidget {
   final WatchSpec spec;
   final VoidCallback? onClose;
   final VoidCallback? onSplit;
+  final VoidCallback? onMinimize;
+  final VoidCallback? onToggleMaximize;
+
+  /// Drag delta emitted by the pane header's title area — the MDI workspace
+  /// uses this to move the window. Null disables dragging (e.g. when the
+  /// window is maximised).
+  final ValueChanged<Offset>? onDragDelta;
+
+  /// Whether the pane is currently the focused MDI window. Controls the
+  /// border highlight in the design (cyan when active, faint otherwise).
+  final bool active;
+
+  /// Whether the underlying MDI window is currently maximised. Flips the
+  /// maximise icon to a "restore" glyph.
+  final bool isMaximized;
 
   const WatchPane({
     super.key,
     required this.spec,
     this.onClose,
     this.onSplit,
+    this.onMinimize,
+    this.onToggleMaximize,
+    this.onDragDelta,
+    this.active = false,
+    this.isMaximized = false,
   });
 
   @override
@@ -104,9 +125,11 @@ class _WatchPaneState extends ConsumerState<WatchPane> {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.panel,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bg2,
+        border: Border.all(
+          color: widget.active ? AppColors.accent : AppColors.border,
+        ),
+        borderRadius: BorderRadius.circular(2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -120,17 +143,20 @@ class _WatchPaneState extends ConsumerState<WatchPane> {
             onEdit: _openEditWatch,
             onClose: widget.onClose,
             onSplit: widget.onSplit,
+            onMinimize: widget.onMinimize,
+            onToggleMaximize: widget.onToggleMaximize,
+            onDragDelta: widget.onDragDelta,
+            isMaximized: widget.isMaximized,
           ),
           if (_view == PaneView.table)
             _FormatBar(
               format: _format,
               asciiChars: _asciiChars,
               isBitMode: _isBitMode,
-              running: result is PollOk || result is PollErr,
+              running: connState == DeviceConnState.connected,
               onChanged: (f) => setState(() => _format = f),
               onAsciiChange: (n) => setState(() => _asciiChars = n),
             ),
-          const Divider(height: 1),
           Expanded(
             child: switch (_view) {
               PaneView.table => connState != DeviceConnState.connected
@@ -141,11 +167,10 @@ class _WatchPaneState extends ConsumerState<WatchPane> {
                       asciiChars: _asciiChars,
                       result: result,
                     ),
-              PaneView.comm => _CommView(deviceId: widget.spec.deviceId),
+              PaneView.comm => _CommView(spec: widget.spec),
               PaneView.errors => _ErrorView(deviceId: widget.spec.deviceId),
             },
           ),
-          const Divider(height: 1),
           _PaneFooter(spec: widget.spec, result: result),
         ],
       ),
@@ -164,6 +189,10 @@ class _PaneHeader extends StatelessWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onClose;
   final VoidCallback? onSplit;
+  final VoidCallback? onMinimize;
+  final VoidCallback? onToggleMaximize;
+  final ValueChanged<Offset>? onDragDelta;
+  final bool isMaximized;
 
   const _PaneHeader({
     required this.spec,
@@ -174,6 +203,10 @@ class _PaneHeader extends StatelessWidget {
     this.onEdit,
     this.onClose,
     this.onSplit,
+    this.onMinimize,
+    this.onToggleMaximize,
+    this.onDragDelta,
+    this.isMaximized = false,
   });
 
   String get _fcLabel {
@@ -193,66 +226,126 @@ class _PaneHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dotColor = switch (connState) {
-      DeviceConnState.connected => AppColors.brand,
-      DeviceConnState.connecting => AppColors.warn,
-      DeviceConnState.error => AppColors.danger,
-      DeviceConnState.disconnected => AppColors.textMuted,
-    };
+    final dragDelta = onDragDelta;
+    final titleArea = Row(
+      children: [
+        StatusDot(status: ConnIndicator.dotFor(connState), size: 7),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '${device.name} · $_fcLabel · '
+            '${spec.startAddress}–${spec.startAddress + spec.quantity - 1} · ${device.pollIntervalMs}ms',
+            style: AppType.mono.copyWith(color: AppColors.text),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+
     return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      color: AppColors.bgRaised,
+      height: 30,
+      decoration: BoxDecoration(
+        color: AppColors.bg3,
+        border: Border(
+          bottom: BorderSide(color: AppColors.border),
+        ),
+      ),
+      padding: const EdgeInsets.only(left: 8, right: 4),
       child: Row(
         children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
+          // Title region — drag handle for the MDI window when callback provided.
           Expanded(
-            child: Text(
-              '${device.name} · $_fcLabel · '
-              '${spec.startAddress}–${spec.startAddress + spec.quantity - 1} · ${device.pollIntervalMs}ms',
-              style:
-                  const TextStyle(fontSize: 12, color: AppColors.text),
-              overflow: TextOverflow.ellipsis,
+            child: MouseRegion(
+              cursor: dragDelta == null
+                  ? SystemMouseCursors.basic
+                  : SystemMouseCursors.move,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate:
+                    dragDelta == null ? null : (d) => dragDelta(d.delta),
+                onDoubleTap: onToggleMaximize,
+                child: titleArea,
+              ),
             ),
           ),
+          const SizedBox(width: 6),
           _ViewToggle(
               deviceId: spec.deviceId,
               value: view,
               onChanged: onViewChanged),
-          if (onEdit != null) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              tooltip: 'Edit watch',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              icon: const Icon(Icons.edit, size: 14),
-              onPressed: onEdit,
-            ),
-          ],
-          if (onSplit != null) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              tooltip: 'Split',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              icon: const Icon(Icons.splitscreen, size: 14),
-              onPressed: onSplit,
-            ),
-          ],
+          if (onEdit != null)
+            _PaneIcon(icon: Icons.edit, tooltip: 'Edit watch', onTap: onEdit!),
+          if (onSplit != null)
+            _PaneIcon(
+                icon: Icons.splitscreen,
+                tooltip: 'Split',
+                onTap: onSplit!),
+          if (onMinimize != null)
+            _PaneIcon(
+                icon: Icons.minimize,
+                tooltip: 'Minimise',
+                onTap: onMinimize!),
+          if (onToggleMaximize != null)
+            _PaneIcon(
+                icon: isMaximized
+                    ? Icons.filter_none_outlined
+                    : Icons.crop_square,
+                tooltip: isMaximized ? 'Restore' : 'Maximise',
+                onTap: onToggleMaximize!),
           if (onClose != null)
-            IconButton(
-              tooltip: 'Close pane',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              icon: const Icon(Icons.close, size: 14),
-              onPressed: onClose,
-            ),
+            _PaneIcon(
+                icon: Icons.close,
+                tooltip: 'Close pane',
+                hoverColor: AppColors.error,
+                onTap: onClose!),
         ],
+      ),
+    );
+  }
+}
+
+class _PaneIcon extends StatefulWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final Color? hoverColor;
+  const _PaneIcon({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.hoverColor,
+  });
+
+  @override
+  State<_PaneIcon> createState() => _PaneIconState();
+}
+
+class _PaneIconState extends State<_PaneIcon> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hi = widget.hoverColor ?? AppColors.text;
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: Container(
+            width: 20,
+            height: 20,
+            alignment: Alignment.center,
+            child: Icon(
+              widget.icon,
+              size: 12,
+              color: _hover ? hi : AppColors.textMuted,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -274,67 +367,57 @@ class _ViewToggle extends ConsumerWidget {
         .watch(errorLogProvider)
         .where((e) => e.deviceId == deviceId)
         .length;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _toggleButton('Table', PaneView.table),
-          _toggleButton('Comm', PaneView.comm),
-          _toggleButton(
-            'Error',
-            PaneView.errors,
-            badge: errorCount,
-          ),
-        ],
-      ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _tab('TABLE', PaneView.table),
+        const SizedBox(width: 2),
+        _tab('COMM', PaneView.comm),
+        const SizedBox(width: 2),
+        _tab('ERRORS', PaneView.errors, badge: errorCount),
+      ],
     );
   }
 
-  Widget _toggleButton(String label, PaneView v, {int badge = 0}) {
+  Widget _tab(String label, PaneView v, {int badge = 0}) {
     final active = v == value;
-    final activeColor =
-        v == PaneView.errors && badge > 0 ? AppColors.danger : AppColors.brand;
     return InkWell(
       onTap: () => onChanged(v),
+      borderRadius: BorderRadius.circular(2),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        color: active
-            ? activeColor.withValues(alpha: 0.18)
-            : Colors.transparent,
+        height: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: active ? AppColors.bg1 : Colors.transparent,
+          border: Border.all(
+            color: active ? AppColors.border : Colors.transparent,
+          ),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        alignment: Alignment.center,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               label,
-              style: TextStyle(
-                fontSize: 11,
-                color: active
-                    ? activeColor
-                    : (badge > 0 && v == PaneView.errors
-                        ? AppColors.danger
-                        : AppColors.textMuted),
-                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+              style: AppType.labelSm.copyWith(
+                color: active ? AppColors.text : AppColors.textMuted,
               ),
             ),
             if (badge > 0) ...[
               const SizedBox(width: 4),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(
-                  color: AppColors.danger,
+                  color: AppColors.error,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   badge > 99 ? '99+' : '$badge',
-                  style: const TextStyle(
+                  style: AppType.labelSm.copyWith(
                     fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: AppColors.onError,
                   ),
                 ),
               ),
@@ -381,36 +464,49 @@ class _FormatBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: 28,
+      decoration: BoxDecoration(
+        color: AppColors.bg2,
+        border: Border(
+          bottom: BorderSide(color: AppColors.border),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          const Text('Format',
-              style:
-                  TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          Text('FORMAT',
+              style: AppType.labelSm.copyWith(color: AppColors.textDim)),
           const SizedBox(width: 8),
           if (isBitMode)
-            const Text('Bool',
-                style: TextStyle(fontSize: 12, color: AppColors.text))
+            Text('Bool',
+                style: AppType.mono.copyWith(color: AppColors.text))
           else
             Container(
+              height: 22,
               decoration: BoxDecoration(
-                color: AppColors.bg,
+                color: AppColors.bg1,
                 border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(2),
               ),
               padding: const EdgeInsets.symmetric(horizontal: 6),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<RegisterFormat>(
                   value: format,
                   isDense: true,
-                  dropdownColor: AppColors.panel,
+                  iconSize: 14,
+                  icon: Icon(Icons.keyboard_arrow_down,
+                      color: AppColors.textMuted),
+                  dropdownColor: AppColors.bg2,
+                  style: AppType.mono.copyWith(color: AppColors.text),
                   items: [
                     for (final f in _options)
                       DropdownMenuItem(
-                          value: f,
-                          child: Text(f.label,
-                              style: const TextStyle(fontSize: 12))),
+                        value: f,
+                        child: Text(
+                          f.label,
+                          style: AppType.mono.copyWith(color: AppColors.text),
+                        ),
+                      ),
                   ],
                   onChanged: (f) {
                     if (f != null) onChanged(f);
@@ -420,37 +516,61 @@ class _FormatBar extends StatelessWidget {
             ),
           if (format == RegisterFormat.ascii && !isBitMode) ...[
             const SizedBox(width: 8),
-            const Text('chars/row',
-                style:
-                    TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            Text('CHARS/ROW',
+                style: AppType.labelSm.copyWith(color: AppColors.textDim)),
             const SizedBox(width: 4),
             SizedBox(
-              width: 48,
-              height: 24,
+              width: 44,
+              height: 22,
               child: TextField(
                 controller: TextEditingController(text: '$asciiChars'),
-                style: const TextStyle(fontSize: 12),
+                style: AppType.monoSm.copyWith(color: AppColors.text),
                 textAlignVertical: TextAlignVertical.center,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 6),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
                   filled: true,
-                  fillColor: AppColors.bg,
+                  fillColor: AppColors.bg1,
                   border: OutlineInputBorder(
-                      borderSide: BorderSide(color: AppColors.border)),
+                    borderRadius: BorderRadius.circular(2),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(2),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
                 ),
                 onSubmitted: (v) =>
                     onAsciiChange(int.tryParse(v) ?? asciiChars),
               ),
             ),
           ],
+          if (isBitMode) ...[
+            const SizedBox(width: 8),
+            Text('locked to Bool by FC',
+                style: AppType.caption.copyWith(
+                  color: AppColors.textDim,
+                  fontStyle: FontStyle.italic,
+                )),
+          ],
           const Spacer(),
           if (running)
-            Row(children: const [
-              Icon(Icons.circle, size: 6, color: AppColors.brand),
-              SizedBox(width: 4),
-              Text('Polling',
-                  style: TextStyle(fontSize: 11, color: AppColors.brand)),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.fiber_manual_record,
+                  size: 8, color: AppColors.online),
+              const SizedBox(width: 5),
+              Text('LIVE',
+                  style:
+                      AppType.labelSm.copyWith(color: AppColors.online)),
+            ])
+          else
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.pause, size: 11, color: AppColors.textMuted),
+              const SizedBox(width: 4),
+              Text('PAUSED',
+                  style: AppType.labelSm
+                      .copyWith(color: AppColors.textMuted)),
             ]),
         ],
       ),
@@ -467,34 +587,83 @@ class _PaneFooter extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Subscribe so that a "Reset counters" action causes an instant rebuild
-    // (otherwise the footer waits for the next poll cycle).
+    // Subscribe so that a "Reset counters" action causes an instant rebuild.
     ref.watch(statsTickProvider);
     final loop = ref.read(deviceHubProvider).devicePoll(spec.deviceId);
-    if (loop == null) return const SizedBox(height: 24);
+    if (loop == null) {
+      return Container(
+        height: 22,
+        decoration: BoxDecoration(
+          color: AppColors.bg3,
+          border: Border(top: BorderSide(color: AppColors.border)),
+        ),
+      );
+    }
     final s = loop.statsFor(spec.id);
     return Container(
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: 22,
+      decoration: BoxDecoration(
+        color: AppColors.bg3,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          Text(
-            'OK ${s.success}  ERR ${s.errors}  Avg ${s.avgLatency.inMilliseconds}ms',
-            style: const TextStyle(
-                fontSize: 11, color: AppColors.textMuted),
+          _Stat(label: 'OK', value: '${s.success}', color: AppColors.online),
+          const SizedBox(width: 12),
+          _Stat(
+            label: 'ERR',
+            value: '${s.errors}',
+            color:
+                s.errors > 0 ? AppColors.error : AppColors.textMuted,
+          ),
+          const SizedBox(width: 12),
+          _Stat(
+            label: 'AVG',
+            value: '${s.avgLatency.inMilliseconds}ms',
+            color: AppColors.textMuted,
           ),
           const Spacer(),
           if (result is PollErr)
             Flexible(
               child: Text(
                 (result as PollErr).error.toString(),
-                style: const TextStyle(
-                    fontSize: 11, color: AppColors.danger),
+                style: AppType.monoSm.copyWith(color: AppColors.error),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
         ],
       ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _Stat({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(label,
+            style: AppType.labelSm.copyWith(
+              fontSize: 9,
+              color: AppColors.textDim,
+            )),
+        const SizedBox(width: 5),
+        Text(value,
+            style: AppType.monoSm.copyWith(color: color)),
+      ],
     );
   }
 }
@@ -574,7 +743,7 @@ class _TableViewState extends ConsumerState<_TableView> {
   Widget build(BuildContext context) {
     final result = widget.result;
     if (result == null) {
-      return const Center(
+      return Center(
         child: Text('Waiting for first poll…',
             style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
       );
@@ -585,7 +754,7 @@ class _TableViewState extends ConsumerState<_TableView> {
           padding: const EdgeInsets.all(16),
           child: Text('Read error: ${result.error}',
               style:
-                  const TextStyle(color: AppColors.connError, fontSize: 12)),
+                   TextStyle(color: AppColors.connError, fontSize: 12)),
         ),
       );
     }
@@ -936,32 +1105,32 @@ class _BoolPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        value ? AppColors.connConnected : AppColors.connDisconnected;
+    final bg = value ? AppColors.online : AppColors.bg1;
+    final fg = value ? AppColors.onOnline : AppColors.textMuted;
+    final border = value ? AppColors.onlineDim : AppColors.border;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Align(
         alignment: Alignment.centerRight,
         child: Opacity(
-          opacity: pending ? 0.55 : 1.0,
+          opacity: pending ? 0.45 : 1.0,
           child: Container(
             width: 56,
-            height: 16,
+            height: 18,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.22),
-              border: Border.all(color: color, width: 1),
-              borderRadius: BorderRadius.circular(3),
+              color: bg,
+              border: Border.all(color: border),
+              borderRadius: BorderRadius.circular(2),
             ),
             child: Text(
               value ? 'TRUE' : 'FALSE',
-              style: TextStyle(
+              style: AppType.monoSm.copyWith(
                 fontSize: 10,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w700,
-                color: color,
-                letterSpacing: 0.5,
+                fontWeight: FontWeight.w600,
+                color: fg,
+                letterSpacing: 0.8,
               ),
             ),
           ),
@@ -1043,7 +1212,7 @@ class _NotConnectedHint extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: isCompact ? 2 : 4),
-                  const Text(
+                  Text(
                     '請先連線此設備',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -1062,19 +1231,34 @@ class _NotConnectedHint extends StatelessWidget {
   }
 }
 
-// ─── Comm view (per-device packet log) ─────────────────────────────────────
+// ─── Comm view (per-watch packet log) ──────────────────────────────────────
+//
+// Filters the global packet log down to just the frames that belong to THIS
+// watch. Without this filter every watch on the same device shows the same
+// torrent of TX/RX, which makes it impossible to see what your watch is
+// actually doing.
+//
+// Match rules:
+//   * TX is kept when its PDU's (FC, startAddr, qty) matches the watch's
+//     own (FC, startAddr-1, qty) signature. Single-register writes (FC05/06)
+//     against the watch's range are also kept, as are multi-writes
+//     (FC15/16) that overlap the range.
+//   * RX is kept by pairing it back to a kept TX:
+//       - TCP: by MBAP transactionId.
+//       - RTU: half-duplex, so the RX is paired with the most recent TX on
+//         the same device.
 
 class _CommView extends ConsumerWidget {
-  final String deviceId;
-  const _CommView({required this.deviceId});
+  final WatchSpec spec;
+  const _CommView({required this.spec});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final all = ref.watch(rawLogProvider);
-    final mine = all.where((p) => p.deviceId == deviceId).toList();
+    final mine = _filterForWatch(all, spec);
     if (mine.isEmpty) {
-      return const Center(
-        child: Text('No packets yet — connect and start polling.',
+      return Center(
+        child: Text('No packets yet for this watch.',
             style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
       );
     }
@@ -1094,7 +1278,7 @@ class _CommView extends ConsumerWidget {
         final summary = _frameSummary(p);
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             border: Border(
                 bottom:
                     BorderSide(color: AppColors.border, width: 0.5)),
@@ -1105,7 +1289,7 @@ class _CommView extends ConsumerWidget {
               SizedBox(
                 width: 96,
                 child: Text(ts,
-                    style: const TextStyle(
+                    style:  TextStyle(
                       fontSize: 11,
                       fontFamily: 'monospace',
                       color: AppColors.textMuted,
@@ -1140,7 +1324,7 @@ class _CommView extends ConsumerWidget {
               Expanded(
                 child: Text(
                   hex,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     fontSize: 11,
                     fontFamily: 'monospace',
                     color: AppColors.text,
@@ -1161,6 +1345,136 @@ class _FrameSummary {
   final String text;
   final bool isException;
   const _FrameSummary(this.text, {required this.isException});
+}
+
+/// Filters the global packet log down to frames that belong to [spec].
+///
+/// Two passes baked into one — TX matching by request signature, RX matching
+/// by pairing back to a kept TX. The kept set is built incrementally so we
+/// can correlate RTU responses (which have no transaction id) with the
+/// preceding TX on the wire.
+List<TaggedRawPacket> _filterForWatch(
+    List<TaggedRawPacket> all, WatchSpec spec) {
+  final out = <TaggedRawPacket>[];
+  // TCP correlation: transactionIds whose TX we kept and whose RX is pending.
+  final pendingTcp = <int>{};
+  // RTU correlation: did the most recent TX on this device match?
+  bool lastTxMatched = false;
+  for (final p in all) {
+    if (p.deviceId != spec.deviceId) continue;
+    if (p.isTx) {
+      final pdu = _parseRequestPdu(p);
+      final keep = pdu != null && _txMatchesWatch(pdu, spec);
+      if (keep) {
+        out.add(p);
+        final txId = p.transactionId;
+        if (txId != null) pendingTcp.add(txId);
+      }
+      // RTU has no txId — record match state for the next RX.
+      lastTxMatched = keep;
+    } else {
+      final txId = p.mbap?.transactionId;
+      if (txId != null) {
+        if (pendingTcp.remove(txId)) out.add(p);
+      } else if (lastTxMatched) {
+        out.add(p);
+        // Half-duplex RTU: one RX per TX. Reset so a stray duplicate doesn't
+        // get counted twice.
+        lastTxMatched = false;
+      }
+    }
+  }
+  return out;
+}
+
+/// Parsed TX request — function code plus the address+quantity tuple we use
+/// for the [_txMatchesWatch] filter. Returns null for non-Modbus or malformed
+/// frames.
+class _RequestPdu {
+  final int fc;
+  final int? address;
+  final int? quantity;
+  const _RequestPdu({required this.fc, this.address, this.quantity});
+}
+
+_RequestPdu? _parseRequestPdu(RawPacket p) {
+  // PDU starts at byte 7 for MBAP (after MBAP header), or byte 1 for RTU
+  // (after the slave id). Reject frames that are too short either way.
+  int pduStart;
+  if (p.transport == ModbusTransport.tcp) {
+    if (p.bytes.length < 8) return null;
+    pduStart = 7;
+  } else {
+    if (p.bytes.length < 4) return null;
+    pduStart = 1;
+  }
+  final b = p.bytes;
+  final fc = b[pduStart] & 0x7F;
+  // Read FCs (01/02/03/04) and multi-writes (15/16) all share the same
+  // request layout: addr (BE u16) + qty (BE u16) at PDU bytes 1..4.
+  // Single-coil/register writes (05/06) carry an address but no quantity.
+  switch (fc) {
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 15:
+    case 16:
+      if (b.length < pduStart + 5) return _RequestPdu(fc: fc);
+      return _RequestPdu(
+        fc: fc,
+        address: (b[pduStart + 1] << 8) | b[pduStart + 2],
+        quantity: (b[pduStart + 3] << 8) | b[pduStart + 4],
+      );
+    case 5:
+    case 6:
+      if (b.length < pduStart + 3) return _RequestPdu(fc: fc);
+      return _RequestPdu(
+        fc: fc,
+        address: (b[pduStart + 1] << 8) | b[pduStart + 2],
+        quantity: 1,
+      );
+    default:
+      return _RequestPdu(fc: fc);
+  }
+}
+
+bool _txMatchesWatch(_RequestPdu pdu, WatchSpec spec) {
+  // Watch addresses are 1-based; on the wire they're 0-based.
+  final wireStart = spec.startAddress - 1;
+  final wireEnd = wireStart + spec.quantity; // exclusive
+
+  // Same FC, exact (addr, qty) match — the normal poll case.
+  if (pdu.fc == spec.functionCode &&
+      pdu.address == wireStart &&
+      pdu.quantity == spec.quantity) {
+    return true;
+  }
+
+  // Writes triggered from the user's interactions on this watch:
+  //   * FC01 coils  → FC05 (single) or FC15 (multi)
+  //   * FC03 holding → FC06 (single) or FC16 (multi)
+  //   * FC02/FC04 are read-only — no writes to match.
+  final singleWriteFc = switch (spec.functionCode) {
+    1 => 5,
+    3 => 6,
+    _ => null,
+  };
+  final multiWriteFc = switch (spec.functionCode) {
+    1 => 15,
+    3 => 16,
+    _ => null,
+  };
+  if (pdu.address == null) return false;
+  if (pdu.fc == singleWriteFc) {
+    return pdu.address! >= wireStart && pdu.address! < wireEnd;
+  }
+  if (pdu.fc == multiWriteFc && pdu.quantity != null) {
+    final aStart = pdu.address!;
+    final aEnd = aStart + pdu.quantity!;
+    return aStart < wireEnd && aEnd > wireStart;
+  }
+  return false;
 }
 
 /// Build the short FC summary shown in the Comm view, transport-aware.
@@ -1206,12 +1520,12 @@ class _ErrorView extends ConsumerWidget {
           color: AppColors.bgRaised,
           child: Row(
             children: [
-              const Icon(Icons.error_outline,
+               Icon(Icons.error_outline,
                   size: 12, color: AppColors.textMuted),
               const SizedBox(width: 6),
               Text(
                 '${mine.length} error${mine.length == 1 ? '' : 's'}',
-                style: const TextStyle(
+                style:  TextStyle(
                     fontSize: 11, color: AppColors.textMuted),
               ),
               const Spacer(),
@@ -1220,7 +1534,7 @@ class _ErrorView extends ConsumerWidget {
                   onTap: () => ref
                       .read(errorLogProvider.notifier)
                       .clearDevice(deviceId),
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     child: Text(
                       'Clear',
@@ -1235,7 +1549,7 @@ class _ErrorView extends ConsumerWidget {
         const Divider(height: 1),
         Expanded(
           child: mine.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text('No errors logged for this device.',
                       style: TextStyle(
                           color: AppColors.textMuted, fontSize: 12)),
@@ -1260,7 +1574,7 @@ class _ErrorView extends ConsumerWidget {
                     return Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         border: Border(
                             bottom: BorderSide(
                                 color: AppColors.border, width: 0.5)),
@@ -1271,7 +1585,7 @@ class _ErrorView extends ConsumerWidget {
                           SizedBox(
                             width: 96,
                             child: Text(ts,
-                                style: const TextStyle(
+                                style:  TextStyle(
                                   fontSize: 11,
                                   fontFamily: 'monospace',
                                   color: AppColors.textMuted,
@@ -1294,7 +1608,7 @@ class _ErrorView extends ConsumerWidget {
                               width: 140,
                               child: Text(
                                 e.watchLabel!,
-                                style: const TextStyle(
+                                style:  TextStyle(
                                   fontSize: 11,
                                   fontFamily: 'monospace',
                                   color: AppColors.textMuted,
@@ -1305,7 +1619,7 @@ class _ErrorView extends ConsumerWidget {
                           Expanded(
                             child: SelectableText(
                               e.message,
-                              style: const TextStyle(
+                              style:  TextStyle(
                                 fontSize: 11,
                                 fontFamily: 'monospace',
                                 color: AppColors.text,
@@ -1396,20 +1710,20 @@ class _EditValueDialogState extends State<_EditValueDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(widget.title,
-                  style: const TextStyle(
+                  style:  TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppColors.text)),
               const SizedBox(height: 4),
               Text(widget.subtitle,
-                  style: const TextStyle(
+                  style:  TextStyle(
                       fontSize: 11, color: AppColors.textMuted)),
               const SizedBox(height: 12),
               TextField(
                 controller: _ctrl,
                 focusNode: _focus,
                 autofocus: true,
-                style: const TextStyle(
+                style:  TextStyle(
                     fontSize: 14,
                     fontFamily: 'monospace',
                     color: AppColors.text),
@@ -1418,19 +1732,19 @@ class _EditValueDialogState extends State<_EditValueDialog> {
                   filled: true,
                   fillColor: AppColors.bg,
                   errorText: _error,
-                  errorStyle: const TextStyle(
+                  errorStyle:  TextStyle(
                       fontSize: 11, color: AppColors.connError),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(4),
-                    borderSide: const BorderSide(color: AppColors.border),
+                    borderSide:  BorderSide(color: AppColors.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(4),
-                    borderSide: const BorderSide(color: AppColors.border),
+                    borderSide:  BorderSide(color: AppColors.border),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(4),
-                    borderSide: const BorderSide(color: AppColors.brand),
+                    borderSide:  BorderSide(color: AppColors.brand),
                   ),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 8),
@@ -1519,12 +1833,12 @@ class _EditBitsDialogState extends State<_EditBitsDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(widget.title,
-                  style: const TextStyle(
+                  style:  TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppColors.text)),
               const SizedBox(height: 4),
-              const Text('Holding register · 16 bits (MSB ← bit 15 … bit 0 → LSB)',
+              Text('Holding register · 16 bits (MSB ← bit 15 … bit 0 → LSB)',
                   style: TextStyle(
                       fontSize: 11, color: AppColors.textMuted)),
               const SizedBox(height: 14),
@@ -1560,7 +1874,7 @@ class _EditBitsDialogState extends State<_EditBitsDialog> {
                   children: [
                     Text(
                       _binStr,
-                      style: const TextStyle(
+                      style:  TextStyle(
                         fontSize: 13,
                         fontFamily: 'monospace',
                         color: AppColors.text,
@@ -1569,7 +1883,7 @@ class _EditBitsDialogState extends State<_EditBitsDialog> {
                     const SizedBox(height: 2),
                     Text(
                       '$_hexStr  ·  dec $_value',
-                      style: const TextStyle(
+                      style:  TextStyle(
                         fontSize: 11,
                         fontFamily: 'monospace',
                         color: AppColors.textMuted,
@@ -1674,7 +1988,7 @@ class _BitCheckbox extends StatelessWidget {
           children: [
             Text(
               '$bit',
-              style: const TextStyle(
+              style:  TextStyle(
                 fontSize: 10,
                 fontFamily: 'monospace',
                 color: AppColors.textMuted,

@@ -144,7 +144,7 @@ class _AddWatchDialogState extends ConsumerState<AddWatchDialog> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text(
                     'Poll interval is now configured per device (cycle '
@@ -170,7 +170,7 @@ class _AddWatchDialogState extends ConsumerState<AddWatchDialog> {
                       borderRadius: BorderRadius.circular(4),
                       border: Border.all(color: AppColors.border),
                     ),
-                    child: const Text(
+                    child: Text(
                       'FC 01/02 → bit (Bool) format auto-locked.',
                       style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                     ),
@@ -207,7 +207,7 @@ class _Label extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Text(text,
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            style:  TextStyle(fontSize: 11, color: AppColors.textMuted)),
       );
 }
 
@@ -232,7 +232,7 @@ class _DeviceDropdown extends StatelessWidget {
           isExpanded: true,
           value: devices.any((d) => d.id == selected) ? selected : null,
           dropdownColor: AppColors.panel,
-          hint: const Text('Add a device first',
+          hint: Text('Add a device first',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
           items: [
             for (final d in devices)
@@ -303,15 +303,15 @@ class _LabeledField extends StatelessWidget {
               fillColor: AppColors.bg,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.border),
+                borderSide:  BorderSide(color: AppColors.border),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(4),
-                borderSide: const BorderSide(color: AppColors.brand),
+                borderSide:  BorderSide(color: AppColors.brand),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
