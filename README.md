@@ -6,11 +6,23 @@
 
 A modern, cross-platform Modbus toolbox for industrial automation engineers — a contemporary alternative to ModScan.
 
+[![Release](https://img.shields.io/github/v/release/ka1hung/modbeak?include_prereleases&sort=semver)](https://github.com/ka1hung/modbeak/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![Flutter](https://img.shields.io/badge/Flutter-3.41.9-02569B?logo=flutter&logoColor=white)
+
 </div>
 
 Built with Flutter for **macOS**, **Windows** and **Linux** desktop. Connect to PLCs, VFDs, IO modules and smart meters over TCP or RTU; read and write registers in real time; watch values change; diagnose communication issues at the byte level.
 
 > **Status:** early / testing (v0.4.0). Expect rough edges.
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="image1.png" alt="Light theme" width="100%"/><br/><sub>Light theme</sub></td>
+    <td align="center"><img src="image2.png" alt="Dark theme" width="100%"/><br/><sub>Dark theme</sub></td>
+  </tr>
+</table>
 
 ---
 
@@ -19,6 +31,19 @@ Built with Flutter for **macOS**, **Windows** and **Linux** desktop. Connect to 
 **Transports**
 - Modbus TCP and Modbus RTU (serial over USB-to-RS-485 adapter) in one client
 - Per-device timeout, min request gap, auto-reconnect, optional request serialisation
+
+**Supported function codes**
+
+| FC | Name                      | Direction |
+|----|---------------------------|-----------|
+| 01 | Read Coils                | Read      |
+| 02 | Read Discrete Inputs      | Read      |
+| 03 | Read Holding Registers    | Read      |
+| 04 | Read Input Registers      | Read      |
+| 05 | Write Single Coil         | Write     |
+| 06 | Write Single Register     | Write     |
+| 15 | Write Multiple Coils      | Write     |
+| 16 | Write Multiple Registers  | Write     |
 
 **Live polling**
 - Multi-device, multi-watch real-time polling on independent intervals
@@ -70,6 +95,25 @@ Grab the latest build from the [Releases page](https://github.com/ka1hung/modbea
 1. Download `modbeak-linux-x64-vX.Y.Z.tar.gz` and extract
 2. Run `./modbeak`
 3. For RTU/serial access on most distros: `sudo usermod -aG dialout $USER`, then log out/in
+
+---
+
+## Quick start
+
+From a fresh install to a live polling watch in under a minute:
+
+1. **Add a device** — top toolbar → **+ Device**
+   - *TCP:* pick **TCP**, enter host (e.g. `192.168.3.205`) and port (default `502`)
+   - *RTU:* pick **RTU**, choose the serial port, set baud / parity / stop bits to match your slave
+   - Click **Connect** — the status dot next to the device name turns green when online
+2. **Add a watch** — top toolbar → **+ Watch**
+   - Pick the device, function code (FC01–04), starting address and quantity
+   - Set the poll interval (e.g. `1000ms`) — the watch starts polling immediately
+3. **Read the values** — switch **Format** (UInt16, Float32 LE, Bool, …) to re-decode without re-polling; the **OK / ERR / AVG** counters at the bottom of each watch show live health
+4. **Write back** — click any cell to edit (format-aware), tap a Bool cell to toggle, or use the bit dialog on a 16-bit binary register
+5. **Save the setup** — top toolbar → **Export** to dump devices + watches + layout as JSON; **Import** to restore on another machine
+
+The **Comm** and **Errors** tabs on each watch show the raw TX/RX packets and structured error log — useful when a slave goes quiet.
 
 ---
 
