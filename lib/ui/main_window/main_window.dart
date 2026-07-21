@@ -1,6 +1,7 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/runtime/device_hub.dart';
 import '../../core/runtime/poll_result.dart';
@@ -41,9 +42,36 @@ class _MainWindowState extends ConsumerState<MainWindow> {
   final GlobalKey<MdiWorkspaceState> _mdiKey =
       GlobalKey<MdiWorkspaceState>();
 
+  // ── Sidebar sizing ──
+  // Width is user-draggable between min/max; dragging well below min snaps
+  // the sidebar closed (VS Code-style). Both width and collapsed state are
+  // persisted via SharedPreferences.
+  static const double _kSidebarMin = 180;
+  static const double _kSidebarMax = 480;
+  static const double _kSidebarDefault = 260;
+  static const double _kSidebarSnapClose = 120;
+  static const String _kPrefSidebarWidth = 'ui.sidebarWidth';
+  static const String _kPrefSidebarCollapsed = 'ui.sidebarCollapsed';
+
+  double _sidebarWidth = _kSidebarDefault;
+  bool _sidebarCollapsed = false;
+  // Unclamped width tracked during an active drag so the snap-close /
+  // snap-open thresholds work even past the clamp bounds.
+  double _dragWidth = 0;
+
   @override
   void initState() {
     super.initState();
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _sidebarWidth = (prefs.getDouble(_kPrefSidebarWidth) ??
+                _kSidebarDefault)
+            .clamp(_kSidebarMin, _kSidebarMax);
+        _sidebarCollapsed =
+            prefs.getBool(_kPrefSidebarCollapsed) ?? false;
+      });
+    });
     // Belt-and-braces: also rebuild from here when the theme flips. The
     // root MaterialApp already rebuilds on `themeModeNotifier`, but a
     // listener at this level guarantees `build` re-runs even if the parent
@@ -95,6 +123,44 @@ class _MainWindowState extends ConsumerState<MainWindow> {
     });
   }
 
+  void _saveSidebarPrefs() {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setDouble(_kPrefSidebarWidth, _sidebarWidth);
+      prefs.setBool(_kPrefSidebarCollapsed, _sidebarCollapsed);
+    });
+  }
+
+  void _toggleSidebar() {
+    setState(() => _sidebarCollapsed = !_sidebarCollapsed);
+    _saveSidebarPrefs();
+  }
+
+  void _onSidebarDragStart() {
+    _dragWidth = _sidebarCollapsed ? 0 : _sidebarWidth;
+  }
+
+  void _onSidebarDrag(double dx) {
+    _dragWidth += dx;
+    setState(() {
+      if (_dragWidth < _kSidebarSnapClose) {
+        _sidebarCollapsed = true;
+      } else {
+        _sidebarCollapsed = false;
+        _sidebarWidth = _dragWidth.clamp(_kSidebarMin, _kSidebarMax);
+      }
+    });
+  }
+
+  void _onSidebarDragEnd() => _saveSidebarPrefs();
+
+  void _resetSidebarWidth() {
+    setState(() {
+      _sidebarCollapsed = false;
+      _sidebarWidth = _kSidebarDefault;
+    });
+    _saveSidebarPrefs();
+  }
+
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceListProvider);
@@ -138,6 +204,8 @@ class _MainWindowState extends ConsumerState<MainWindow> {
               onAddDevice: _onAddDevice,
               onAddWatch: _onAddWatch,
               showMenu: isCompact,
+              sidebarVisible: !_sidebarCollapsed,
+              onToggleSidebar: isCompact ? null : _toggleSidebar,
             ),
             Container(height: 1, color: AppColors.border),
             Expanded(
@@ -149,8 +217,16 @@ class _MainWindowState extends ConsumerState<MainWindow> {
                     )
                   : Row(
                       children: [
-                        sidebar,
-                        Container(width: 1, color: AppColors.border),
+                        if (!_sidebarCollapsed)
+                          SizedBox(width: _sidebarWidth, child: sidebar),
+                        // Handle stays mounted while collapsed so a drag
+                        // from the left edge can pull the sidebar back out.
+                        _SidebarResizeHandle(
+                          onDragStart: _onSidebarDragStart,
+                          onDrag: _onSidebarDrag,
+                          onDragEnd: _onSidebarDragEnd,
+                          onDoubleTap: _resetSidebarWidth,
+                        ),
                         Expanded(
                           child: _RightPane(
                             selection: _selection,
@@ -258,10 +334,14 @@ class _TopToolbar extends StatelessWidget {
   final VoidCallback onAddDevice;
   final VoidCallback onAddWatch;
   final bool showMenu;
+  final bool sidebarVisible;
+  final VoidCallback? onToggleSidebar;
   const _TopToolbar({
     required this.onAddDevice,
     required this.onAddWatch,
     this.showMenu = false,
+    this.sidebarVisible = true,
+    this.onToggleSidebar,
   });
 
   @override
@@ -278,6 +358,20 @@ class _TopToolbar extends StatelessWidget {
                 tooltip: 'Devices',
                 onTap: () => Scaffold.of(ctx).openDrawer(),
                 child: Icon(Icons.menu, size: 16, color: AppColors.text),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ] else if (onToggleSidebar != null) ...[
+            _IconChip(
+              tooltip: sidebarVisible ? 'Hide sidebar' : 'Show sidebar',
+              onTap: onToggleSidebar!,
+              child: Icon(
+                sidebarVisible
+                    ? Icons.vertical_split
+                    : Icons.vertical_split_outlined,
+                size: 15,
+                color:
+                    sidebarVisible ? AppColors.textMuted : AppColors.accent,
               ),
             ),
             const SizedBox(width: 6),
@@ -523,6 +617,69 @@ class _MbtButtonState extends State<_MbtButton> {
   }
 }
 
+// ─── Sidebar resize handle ─────────────────────────────────────────────────
+
+/// Thin draggable divider between the sidebar and the right pane. Shows a
+/// col-resize cursor, highlights on hover/drag, and resets the width on
+/// double-tap. Kept mounted even when the sidebar is collapsed so dragging
+/// rightwards from the window edge re-opens it.
+class _SidebarResizeHandle extends StatefulWidget {
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDragEnd;
+  final VoidCallback onDoubleTap;
+  const _SidebarResizeHandle({
+    required this.onDragStart,
+    required this.onDrag,
+    required this.onDragEnd,
+    required this.onDoubleTap,
+  });
+
+  @override
+  State<_SidebarResizeHandle> createState() => _SidebarResizeHandleState();
+}
+
+class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
+  bool _hover = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hi = _hover || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) {
+          setState(() => _dragging = true);
+          widget.onDragStart();
+        },
+        onHorizontalDragUpdate: (d) => widget.onDrag(d.delta.dx),
+        onHorizontalDragEnd: (_) {
+          setState(() => _dragging = false);
+          widget.onDragEnd();
+        },
+        onHorizontalDragCancel: () {
+          setState(() => _dragging = false);
+          widget.onDragEnd();
+        },
+        onDoubleTap: widget.onDoubleTap,
+        child: SizedBox(
+          width: 5,
+          child: Center(
+            child: Container(
+              width: hi ? 3 : 1,
+              color: hi ? AppColors.accent : AppColors.border,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ─── Sidebar (tree: devices > watches) ─────────────────────────────────────
 
 class _Sidebar extends ConsumerWidget {
@@ -546,8 +703,9 @@ class _Sidebar extends ConsumerWidget {
     final connStates = ref.watch(deviceConnProvider);
     final watches = ref.watch(watchListProvider);
 
+    // Width is imposed by the parent (resizable SizedBox on desktop,
+    // Drawer on compact) — no intrinsic width here.
     return Container(
-      width: 260,
       color: AppColors.bg2,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
