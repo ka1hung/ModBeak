@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/app_info.dart';
 import 'ui/main_window/main_window.dart';
 import 'ui/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppInfo.load();
   runApp(const ProviderScope(child: MbtApp()));
 }
 

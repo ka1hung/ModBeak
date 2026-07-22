@@ -15,7 +15,7 @@ A modern, cross-platform Modbus toolbox for industrial automation engineers — 
 
 Built with Flutter for **macOS**, **Windows** and **Linux** desktop. Connect to PLCs, VFDs, IO modules and smart meters over TCP or RTU; read and write registers in real time; watch values change; diagnose communication issues at the byte level.
 
-> **Status:** early / testing (v0.4.0). Expect rough edges.
+> **Status:** early / testing (v1.0.1). Expect rough edges.
 
 <table align="center">
   <tr>

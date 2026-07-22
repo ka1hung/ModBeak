@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/app_info.dart';
 import '../../core/runtime/device_hub.dart';
 import '../../core/runtime/poll_result.dart';
 import '../../data/models/device_config.dart';
@@ -14,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../watch_window/mdi_workspace.dart';
 import '../widgets/brand.dart';
 import '../widgets/conn_indicator.dart';
+import 'dialogs/about_dialog.dart';
 import 'dialogs/add_device_dialog.dart';
 import 'dialogs/add_watch_dialog.dart';
 
@@ -377,6 +379,8 @@ class _TopToolbar extends StatelessWidget {
             const SizedBox(width: 6),
           ],
           const BrandMark(),
+          const SizedBox(width: 7),
+          const _VersionBadge(),
           _Divider(),
           _MbtButton(
             kind: _ButtonKind.primary,
@@ -433,6 +437,34 @@ class _TopToolbar extends StatelessWidget {
             }),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// `v1.0.0` chip beside the wordmark; opens the About box on tap.
+class _VersionBadge extends StatelessWidget {
+  const _VersionBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final label = AppInfo.shortLabel;
+    if (label.isEmpty) return const SizedBox.shrink();
+    return Tooltip(
+      message: 'ModBeak ${AppInfo.fullLabel} — click for details',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (_) => const AboutModBeakDialog(),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          child: Text(
+            label,
+            style: AppType.monoSm.copyWith(color: AppColors.textDim),
+          ),
+        ),
       ),
     );
   }
