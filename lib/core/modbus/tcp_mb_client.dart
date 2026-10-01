@@ -43,6 +43,11 @@ class TcpMbClient implements MbClient {
   @override
   Stream<RawPacket> get rawPackets$ => _rawCtrl.stream;
 
+  final StreamController<void> _discCtrl = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get disconnected$ => _discCtrl.stream;
+
   TcpMbClient({
     required this.host,
     required this.port,
@@ -64,8 +69,8 @@ class TcpMbClient implements MbClient {
       final s = await Socket.connect(host, port, timeout: timeout);
       s.listen(
         _onData,
-        onError: (Object _, [StackTrace? stack]) => _shutdown(),
-        onDone: _shutdown,
+        onError: (Object _, [StackTrace? stack]) => _shutdown(lost: true),
+        onDone: () => _shutdown(lost: true),
         cancelOnError: true,
       );
       _socket = s;
@@ -92,9 +97,10 @@ class TcpMbClient implements MbClient {
   Future<void> dispose() async {
     await close();
     await _rawCtrl.close();
+    await _discCtrl.close();
   }
 
-  void _shutdown() {
+  void _shutdown({bool lost = false}) {
     final s = _socket;
     _socket = null;
     s?.destroy();
@@ -103,6 +109,11 @@ class TcpMbClient implements MbClient {
     }
     _pending.clear();
     _rxBuffer = Uint8List(0);
+    // `s != null` makes this one-shot: the destroy() above re-triggers
+    // onDone, but by then the socket field is already cleared.
+    if (lost && s != null && !_discCtrl.isClosed) {
+      _discCtrl.add(null);
+    }
   }
 
   // ─── Public API: same names as Go mbclient ──────────────────────────────

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/codec/format_codec.dart';
@@ -559,7 +560,7 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
   Widget build(BuildContext context) {
     final format = sanitizeFormat(_spec.format, _spec.functionCode);
     return Container(
-      height: 34,
+      height: 44,
       decoration: BoxDecoration(
         color: AppColors.bg2,
         border: Border(
@@ -676,16 +677,21 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
   }) {
     return SizedBox(
       width: width,
-      height: 26,
+      height: 32,
       child: TextField(
         controller: ctrl,
         focusNode: focus,
+        expands: true,
+        maxLines: null,
+        minLines: null,
+        textInputAction: TextInputAction.done,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         style: AppType.mono.copyWith(color: AppColors.text),
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
           isDense: true,
           contentPadding:
-              const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
           filled: true,
           fillColor: AppColors.bg1,
           border: OutlineInputBorder(
@@ -712,7 +718,7 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
     required ValueChanged<T> onChanged,
   }) {
     return Container(
-      height: 26,
+      height: 32,
       decoration: BoxDecoration(
         color: AppColors.bg1,
         border: Border.all(color: AppColors.border),

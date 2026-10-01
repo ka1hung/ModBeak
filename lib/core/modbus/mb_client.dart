@@ -17,6 +17,13 @@ abstract class MbClient {
   /// Emits every TX/RX frame, in order, for the raw packet panel.
   Stream<RawPacket> get rawPackets$;
 
+  /// Fires once when the transport drops unexpectedly — the peer closed the
+  /// socket, the network failed, or the serial reader died. A deliberate
+  /// [close] / [dispose] never emits. Listeners (the DeviceHub) use this to
+  /// stop polling and surface the disconnected state instead of letting
+  /// every subsequent request fail with [MbDisconnect].
+  Stream<void> get disconnected$;
+
   bool get isConnected;
 
   Future<void> open();

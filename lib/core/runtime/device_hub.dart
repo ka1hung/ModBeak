@@ -37,6 +37,15 @@ class DeviceHub {
   Stream<TaggedRawPacket> get rawPackets$ => _allRawCtrl.stream
       .map((p) => p as TaggedRawPacket);
 
+  final StreamController<String> _lostCtrl =
+      StreamController<String>.broadcast();
+
+  /// Emits a device id whenever that device's transport dropped
+  /// unexpectedly. By the time the event fires the hub has already stopped
+  /// the device's poll loop and disposed the dead client — subscribers only
+  /// need to update UI state / decide whether to auto-reconnect.
+  Stream<String> get connectionLost$ => _lostCtrl.stream;
+
   /// All devices currently registered.
   Iterable<DeviceState> get devices => _devices.values.map((e) => e.state);
 
@@ -109,12 +118,29 @@ class DeviceHub {
       await c.open();
       entry.client = c;
       entry.state.conn = DeviceConnState.connected;
+      c.disconnected$.listen((_) => _onConnectionLost(deviceId, c));
     } catch (e) {
       await c.dispose();
       entry.state.conn = DeviceConnState.error;
       entry.state.lastError = e.toString();
       rethrow;
     }
+  }
+
+  /// Transport died under us (peer closed the socket, network drop, serial
+  /// reader error). Stop polling immediately so the error log doesn't fill
+  /// with one MbDisconnect per watch per cycle, and flip the state so the
+  /// UI shows the device as down.
+  void _onConnectionLost(String deviceId, MbClient c) {
+    final entry = _devices[deviceId];
+    // Stale event — device removed or already replaced by a reconnect.
+    if (entry == null || !identical(entry.client, c)) return;
+    _polls.remove(deviceId)?.stop();
+    entry.client = null;
+    unawaited(c.dispose());
+    entry.state.conn = DeviceConnState.error;
+    entry.state.lastError = 'Connection lost';
+    _lostCtrl.add(deviceId);
   }
 
   Future<void> disconnect(String deviceId) async {

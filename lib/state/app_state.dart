@@ -60,10 +60,76 @@ final deviceListProvider =
         DeviceListNotifier.new);
 
 class DeviceConnNotifier extends Notifier<Map<String, DeviceConnState>> {
+  /// Per-device token. Bumping it cancels any in-flight auto-reconnect
+  /// loop for that device (manual connect / disconnect supersede it).
+  final Map<String, int> _reconnectGen = {};
+
   @override
-  Map<String, DeviceConnState> build() => const {};
+  Map<String, DeviceConnState> build() {
+    final sub = ref
+        .read(deviceHubProvider)
+        .connectionLost$
+        .listen(_onConnectionLost);
+    ref.onDispose(sub.cancel);
+    return const {};
+  }
+
+  /// The hub already stopped polling and dropped the dead client — here we
+  /// sync the UI state, log ONE entry, and honour the device's
+  /// autoReconnect flag.
+  void _onConnectionLost(String id) {
+    _bumpGen(id);
+    state = {...state, id: DeviceConnState.error};
+    ref.read(errorLogProvider.notifier).add(ErrorLogEntry(
+          deviceId: id,
+          time: DateTime.now(),
+          message:
+              'Connection lost — closed by remote or network failure',
+          source: ErrorSource.connect,
+        ));
+    DeviceConfig? cfg;
+    for (final d in ref.read(deviceListProvider)) {
+      if (d.id == id) {
+        cfg = d;
+        break;
+      }
+    }
+    if (cfg != null && cfg.autoReconnect) {
+      unawaited(_reconnectLoop(id));
+    }
+  }
+
+  int _bumpGen(String id) =>
+      _reconnectGen[id] = (_reconnectGen[id] ?? 0) + 1;
+
+  /// Retry every 3 s until connected, superseded by a manual action, or the
+  /// device is removed. Failed attempts are silent — the single
+  /// "Connection lost" entry above already tells the story; one line per
+  /// retry would recreate the flood this fix removes.
+  Future<void> _reconnectLoop(String id) async {
+    final gen = _reconnectGen[id];
+    while (true) {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      if (_reconnectGen[id] != gen) return;
+      if (!ref.read(deviceListProvider).any((d) => d.id == id)) return;
+      if (state[id] == DeviceConnState.connected) return;
+      try {
+        await ref.read(deviceHubProvider).connect(id);
+        if (_reconnectGen[id] != gen) {
+          // A manual action raced us mid-connect; let it win.
+          await ref.read(deviceHubProvider).disconnect(id);
+          return;
+        }
+        state = {...state, id: DeviceConnState.connected};
+        return;
+      } catch (_) {
+        // Still down — next round.
+      }
+    }
+  }
 
   Future<void> connect(String id) async {
+    _bumpGen(id);
     state = {...state, id: DeviceConnState.connecting};
     try {
       await ref.read(deviceHubProvider).connect(id);
@@ -80,6 +146,7 @@ class DeviceConnNotifier extends Notifier<Map<String, DeviceConnState>> {
   }
 
   Future<void> disconnect(String id) async {
+    _bumpGen(id);
     await ref.read(deviceHubProvider).disconnect(id);
     state = {...state, id: DeviceConnState.disconnected};
   }

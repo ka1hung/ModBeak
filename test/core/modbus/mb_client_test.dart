@@ -198,6 +198,57 @@ void main() {
   });
 
   group('MbClient — connection lifecycle', () {
+    test('peer-closed connection emits disconnected\$ once and drops state',
+        () async {
+      final server = await FakeModbusServer.start();
+      final client = MbClient.tcp(
+        host: '127.0.0.1',
+        port: server.port,
+        timeout: const Duration(seconds: 1),
+      );
+      await client.open();
+
+      final events = <void>[];
+      client.disconnected$.listen(events.add);
+
+      // Make sure the server has accepted us, then slam the door — the
+      // "wrong unit id → slave force-closes the socket" scenario.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await server.dropConnection();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(events.length, 1);
+      expect(client.isConnected, isFalse);
+      // Follow-up requests fail fast instead of hanging.
+      await expectLater(
+          client.readReg(1, 0, 1), throwsA(isA<MbDisconnect>()));
+
+      await client.dispose();
+      await server.close();
+    });
+
+    test('deliberate close() does not emit disconnected\$', () async {
+      final server = await FakeModbusServer.start();
+      final client = MbClient.tcp(
+        host: '127.0.0.1',
+        port: server.port,
+        timeout: const Duration(seconds: 1),
+      );
+      await client.open();
+
+      final events = <void>[];
+      client.disconnected$.listen(events.add);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await client.close();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(events, isEmpty);
+
+      await client.dispose();
+      await server.close();
+    });
+
     test('connecting to closed port throws MbDisconnect', () async {
       // Bind then close to grab a known-unused port.
       final probe = await FakeModbusServer.start();

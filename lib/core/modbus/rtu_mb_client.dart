@@ -57,6 +57,11 @@ class RtuMbClient implements MbClient {
   @override
   Stream<RawPacket> get rawPackets$ => _rawCtrl.stream;
 
+  final StreamController<void> _discCtrl = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get disconnected$ => _discCtrl.stream;
+
   RtuMbClient({
     required this.serialPortName,
     this.baudRate = 9600,
@@ -104,8 +109,8 @@ class RtuMbClient implements MbClient {
     _reader = SerialPortReader(p);
     _readerSub = _reader!.stream.listen(
       _onData,
-      onError: (Object _, [StackTrace? stack]) => _shutdown(),
-      onDone: _shutdown,
+      onError: (Object _, [StackTrace? stack]) => _shutdown(lost: true),
+      onDone: () => _shutdown(lost: true),
       cancelOnError: true,
     );
   }
@@ -130,15 +135,34 @@ class RtuMbClient implements MbClient {
   Future<void> dispose() async {
     await close();
     await _rawCtrl.close();
+    await _discCtrl.close();
   }
 
-  void _shutdown() {
+  void _shutdown({bool lost = false}) {
     _expectedLen = 0;
     _rxBuf = BytesBuilder(copy: false);
     final c = _pending;
     _pending = null;
     if (c != null && !c.isCompleted) {
       c.completeError(const MbDisconnect());
+    }
+    if (lost) {
+      // Reader stream died (cable pulled, driver error) — tear the port
+      // down so isConnected goes false, then notify. `p != null` makes
+      // this one-shot if the stream fires both onError and onDone.
+      final p = _port;
+      _port = null;
+      _readerSub?.cancel();
+      _readerSub = null;
+      _reader?.close();
+      _reader = null;
+      if (p != null) {
+        try {
+          if (p.isOpen) p.close();
+          p.dispose();
+        } catch (_) {}
+        if (!_discCtrl.isClosed) _discCtrl.add(null);
+      }
     }
   }
 
