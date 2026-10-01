@@ -559,7 +559,7 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
   Widget build(BuildContext context) {
     final format = sanitizeFormat(_spec.format, _spec.functionCode);
     return Container(
-      height: 28,
+      height: 34,
       decoration: BoxDecoration(
         color: AppColors.bg2,
         border: Border(
@@ -575,13 +575,13 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
               child: Row(
                 children: [
                   _label('ADDR'),
-                  _numField(_addrCtrl, _addrFocus, _commitAddr, width: 52),
+                  _numField(_addrCtrl, _addrFocus, _commitAddr, width: 64),
                   const SizedBox(width: 10),
                   _label('QTY'),
-                  _numField(_qtyCtrl, _qtyFocus, _commitQty, width: 44),
+                  _numField(_qtyCtrl, _qtyFocus, _commitQty, width: 56),
                   const SizedBox(width: 10),
                   _label('ID'),
-                  _numField(_unitCtrl, _unitFocus, _commitUnit, width: 36),
+                  _numField(_unitCtrl, _unitFocus, _commitUnit, width: 44),
                   const SizedBox(width: 10),
                   _label('FC'),
                   _dropdown<int>(
@@ -633,7 +633,7 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
                     const SizedBox(width: 10),
                     _label('CHARS/ROW'),
                     _numField(_asciiCtrl, _asciiFocus, _commitAscii,
-                        width: 44),
+                        width: 56),
                   ],
                 ],
               ),
@@ -676,11 +676,11 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
   }) {
     return SizedBox(
       width: width,
-      height: 22,
+      height: 26,
       child: TextField(
         controller: ctrl,
         focusNode: focus,
-        style: AppType.monoSm.copyWith(color: AppColors.text),
+        style: AppType.mono.copyWith(color: AppColors.text),
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
           isDense: true,
@@ -712,7 +712,7 @@ class _ParamsBarState extends ConsumerState<_ParamsBar> {
     required ValueChanged<T> onChanged,
   }) {
     return Container(
-      height: 22,
+      height: 26,
       decoration: BoxDecoration(
         color: AppColors.bg1,
         border: Border.all(color: AppColors.border),
