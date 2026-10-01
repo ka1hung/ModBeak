@@ -61,35 +61,17 @@ class WatchPane extends ConsumerStatefulWidget {
 }
 
 class _WatchPaneState extends ConsumerState<WatchPane> {
-  late RegisterFormat _format;
-  late int _asciiChars;
   PaneView _view = PaneView.table;
 
   @override
   void initState() {
     super.initState();
-    _format = sanitizeFormat(widget.spec.format, widget.spec.functionCode);
-    _asciiChars = widget.spec.asciiCharsPerRow;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref
           .read(liveWatchProvider.notifier)
           .ensureDevicePolling(widget.spec.deviceId);
     });
   }
-
-  @override
-  void didUpdateWidget(covariant WatchPane oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.spec != widget.spec) {
-      // FC may have changed — re-sanitize the format.
-      _format = sanitizeFormat(widget.spec.format, widget.spec.functionCode);
-      // No loop restart needed — the device loop reads the watch list
-      // fresh on every cycle.
-    }
-  }
-
-  bool get _isBitMode =>
-      widget.spec.functionCode == 1 || widget.spec.functionCode == 2;
 
   /// Quick-edit shortcut on the pane header — same dialog as the sidebar's
   /// PopupMenu Edit entry, just one click closer when you've already got
@@ -149,13 +131,9 @@ class _WatchPaneState extends ConsumerState<WatchPane> {
             isMaximized: widget.isMaximized,
           ),
           if (_view == PaneView.table)
-            _FormatBar(
-              format: _format,
-              asciiChars: _asciiChars,
-              isBitMode: _isBitMode,
+            _ParamsBar(
+              spec: widget.spec,
               running: connState == DeviceConnState.connected,
-              onChanged: (f) => setState(() => _format = f),
-              onAsciiChange: (n) => setState(() => _asciiChars = n),
             ),
           Expanded(
             child: switch (_view) {
@@ -163,8 +141,9 @@ class _WatchPaneState extends ConsumerState<WatchPane> {
                   ? _NotConnectedHint(connState: connState)
                   : _TableView(
                       spec: widget.spec,
-                      format: _isBitMode ? RegisterFormat.bool_ : _format,
-                      asciiChars: _asciiChars,
+                      format: sanitizeFormat(
+                          widget.spec.format, widget.spec.functionCode),
+                      asciiChars: widget.spec.asciiCharsPerRow,
                       result: result,
                     ),
               PaneView.comm => _CommView(spec: widget.spec),
@@ -429,25 +408,24 @@ class _ViewToggle extends ConsumerWidget {
   }
 }
 
-// ─── Format selector ────────────────────────────────────────────────────────
+// ─── Params bar — inline-editable watch parameters ─────────────────────────
 
-class _FormatBar extends StatelessWidget {
-  final RegisterFormat format;
-  final int asciiChars;
-  final bool isBitMode;
+/// Replaces the old read-only Format bar. ADDR / QTY / ID commit on Enter or
+/// focus loss; FC and FORMAT apply immediately. Every change is written back
+/// to the [WatchSpec] via [watchListProvider], so it persists with the config
+/// and the device poll loop picks it up on its next cycle — no restart needed.
+/// The left side scrolls horizontally so narrow split panes stay usable.
+class _ParamsBar extends ConsumerStatefulWidget {
+  final WatchSpec spec;
   final bool running;
-  final ValueChanged<RegisterFormat> onChanged;
-  final ValueChanged<int> onAsciiChange;
-  const _FormatBar({
-    required this.format,
-    required this.asciiChars,
-    required this.isBitMode,
-    required this.running,
-    required this.onChanged,
-    required this.onAsciiChange,
-  });
+  const _ParamsBar({required this.spec, required this.running});
 
-  static const _options = [
+  @override
+  ConsumerState<_ParamsBar> createState() => _ParamsBarState();
+}
+
+class _ParamsBarState extends ConsumerState<_ParamsBar> {
+  static const _formatOptions = [
     RegisterFormat.u16,
     RegisterFormat.i16,
     RegisterFormat.hex,
@@ -461,8 +439,125 @@ class _FormatBar extends StatelessWidget {
     RegisterFormat.ascii,
   ];
 
+  static const _fcLabels = {
+    1: 'FC01 Coils',
+    2: 'FC02 DI',
+    3: 'FC03 HR',
+    4: 'FC04 IR',
+  };
+
+  late final TextEditingController _addrCtrl;
+  late final TextEditingController _qtyCtrl;
+  late final TextEditingController _unitCtrl;
+  late final TextEditingController _asciiCtrl;
+  late final FocusNode _addrFocus;
+  late final FocusNode _qtyFocus;
+  late final FocusNode _unitFocus;
+  late final FocusNode _asciiFocus;
+
+  WatchSpec get _spec => widget.spec;
+  bool get _isBitMode => _spec.functionCode == 1 || _spec.functionCode == 2;
+
+  @override
+  void initState() {
+    super.initState();
+    _addrCtrl = TextEditingController(text: '${_spec.startAddress}');
+    _qtyCtrl = TextEditingController(text: '${_spec.quantity}');
+    _unitCtrl = TextEditingController(text: '${_spec.unitId}');
+    _asciiCtrl = TextEditingController(text: '${_spec.asciiCharsPerRow}');
+    _addrFocus = _commitOnBlur(_commitAddr);
+    _qtyFocus = _commitOnBlur(_commitQty);
+    _unitFocus = _commitOnBlur(_commitUnit);
+    _asciiFocus = _commitOnBlur(_commitAscii);
+  }
+
+  /// Focus node that fires [commit] when the field loses focus — typing never
+  /// touches the poll loop; only Enter or blur does.
+  FocusNode _commitOnBlur(VoidCallback commit) {
+    final node = FocusNode();
+    node.addListener(() {
+      if (!node.hasFocus) commit();
+    });
+    return node;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ParamsBar old) {
+    super.didUpdateWidget(old);
+    if (old.spec == widget.spec) return;
+    // Spec changed externally (edit dialog, another pane) — refresh any
+    // field the user is not currently typing in.
+    _syncIfUnfocused(_addrFocus, _addrCtrl, '${_spec.startAddress}');
+    _syncIfUnfocused(_qtyFocus, _qtyCtrl, '${_spec.quantity}');
+    _syncIfUnfocused(_unitFocus, _unitCtrl, '${_spec.unitId}');
+    _syncIfUnfocused(_asciiFocus, _asciiCtrl, '${_spec.asciiCharsPerRow}');
+  }
+
+  void _syncIfUnfocused(
+      FocusNode focus, TextEditingController ctrl, String value) {
+    if (!focus.hasFocus && ctrl.text != value) ctrl.text = value;
+  }
+
+  @override
+  void dispose() {
+    _addrCtrl.dispose();
+    _qtyCtrl.dispose();
+    _unitCtrl.dispose();
+    _asciiCtrl.dispose();
+    _addrFocus.dispose();
+    _qtyFocus.dispose();
+    _unitFocus.dispose();
+    _asciiFocus.dispose();
+    super.dispose();
+  }
+
+  void _update(WatchSpec next) {
+    if (next == _spec) return;
+    ref.read(watchListProvider.notifier).update(next);
+  }
+
+  void _commitAddr() {
+    var v = int.tryParse(_addrCtrl.text) ?? _spec.startAddress;
+    if (v < 1) v = 1; // 1-based; UI never sends 0 (same rule as the dialog)
+    _addrCtrl.text = '$v';
+    _update(_spec.copyWith(startAddress: v));
+  }
+
+  void _commitQty() {
+    var v = int.tryParse(_qtyCtrl.text) ?? _spec.quantity;
+    if (v < 1) v = 1;
+    _qtyCtrl.text = '$v';
+    _update(_spec.copyWith(quantity: v));
+  }
+
+  void _commitUnit() {
+    var v = int.tryParse(_unitCtrl.text) ?? _spec.unitId;
+    v = v.clamp(0, 255);
+    _unitCtrl.text = '$v';
+    _update(_spec.copyWith(unitId: v));
+  }
+
+  void _commitAscii() {
+    var v = int.tryParse(_asciiCtrl.text) ?? _spec.asciiCharsPerRow;
+    if (v < 1) v = 1;
+    _asciiCtrl.text = '$v';
+    _update(_spec.copyWith(asciiCharsPerRow: v));
+  }
+
+  void _setFc(int fc) {
+    _update(_spec.copyWith(
+      functionCode: fc,
+      format: sanitizeFormat(_spec.format, fc),
+    ));
+  }
+
+  void _setFormat(RegisterFormat f) {
+    _update(_spec.copyWith(format: f));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final format = sanitizeFormat(_spec.format, _spec.functionCode);
     return Container(
       height: 28,
       decoration: BoxDecoration(
@@ -474,88 +569,78 @@ class _FormatBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          Text('FORMAT',
-              style: AppType.labelSm.copyWith(color: AppColors.textDim)),
-          const SizedBox(width: 8),
-          if (isBitMode)
-            Text('Bool',
-                style: AppType.mono.copyWith(color: AppColors.text))
-          else
-            Container(
-              height: 22,
-              decoration: BoxDecoration(
-                color: AppColors.bg1,
-                border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(2),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<RegisterFormat>(
-                  value: format,
-                  isDense: true,
-                  iconSize: 14,
-                  icon: Icon(Icons.keyboard_arrow_down,
-                      color: AppColors.textMuted),
-                  dropdownColor: AppColors.bg2,
-                  style: AppType.mono.copyWith(color: AppColors.text),
-                  items: [
-                    for (final f in _options)
-                      DropdownMenuItem(
-                        value: f,
-                        child: Text(
-                          f.label,
-                          style: AppType.mono.copyWith(color: AppColors.text),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _label('ADDR'),
+                  _numField(_addrCtrl, _addrFocus, _commitAddr, width: 52),
+                  const SizedBox(width: 10),
+                  _label('QTY'),
+                  _numField(_qtyCtrl, _qtyFocus, _commitQty, width: 44),
+                  const SizedBox(width: 10),
+                  _label('ID'),
+                  _numField(_unitCtrl, _unitFocus, _commitUnit, width: 36),
+                  const SizedBox(width: 10),
+                  _label('FC'),
+                  _dropdown<int>(
+                    value: _spec.functionCode,
+                    items: [
+                      for (final e in _fcLabels.entries)
+                        DropdownMenuItem(
+                          value: e.key,
+                          child: Text(
+                            e.value,
+                            style:
+                                AppType.mono.copyWith(color: AppColors.text),
+                          ),
                         ),
-                      ),
+                      if (!_fcLabels.containsKey(_spec.functionCode))
+                        DropdownMenuItem(
+                          value: _spec.functionCode,
+                          child: Text(
+                            'FC${_spec.functionCode}',
+                            style:
+                                AppType.mono.copyWith(color: AppColors.text),
+                          ),
+                        ),
+                    ],
+                    onChanged: _setFc,
+                  ),
+                  const SizedBox(width: 10),
+                  _label('FORMAT'),
+                  if (_isBitMode)
+                    Text('Bool',
+                        style: AppType.mono.copyWith(color: AppColors.text))
+                  else
+                    _dropdown<RegisterFormat>(
+                      value: format,
+                      items: [
+                        for (final f in _formatOptions)
+                          DropdownMenuItem(
+                            value: f,
+                            child: Text(
+                              f.label,
+                              style: AppType.mono
+                                  .copyWith(color: AppColors.text),
+                            ),
+                          ),
+                      ],
+                      onChanged: _setFormat,
+                    ),
+                  if (format == RegisterFormat.ascii && !_isBitMode) ...[
+                    const SizedBox(width: 10),
+                    _label('CHARS/ROW'),
+                    _numField(_asciiCtrl, _asciiFocus, _commitAscii,
+                        width: 44),
                   ],
-                  onChanged: (f) {
-                    if (f != null) onChanged(f);
-                  },
-                ),
+                ],
               ),
             ),
-          if (format == RegisterFormat.ascii && !isBitMode) ...[
-            const SizedBox(width: 8),
-            Text('CHARS/ROW',
-                style: AppType.labelSm.copyWith(color: AppColors.textDim)),
-            const SizedBox(width: 4),
-            SizedBox(
-              width: 44,
-              height: 22,
-              child: TextField(
-                controller: TextEditingController(text: '$asciiChars'),
-                style: AppType.monoSm.copyWith(color: AppColors.text),
-                textAlignVertical: TextAlignVertical.center,
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
-                  filled: true,
-                  fillColor: AppColors.bg1,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(2),
-                    borderSide: BorderSide(color: AppColors.border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(2),
-                    borderSide: BorderSide(color: AppColors.border),
-                  ),
-                ),
-                onSubmitted: (v) =>
-                    onAsciiChange(int.tryParse(v) ?? asciiChars),
-              ),
-            ),
-          ],
-          if (isBitMode) ...[
-            const SizedBox(width: 8),
-            Text('locked to Bool by FC',
-                style: AppType.caption.copyWith(
-                  color: AppColors.textDim,
-                  fontStyle: FontStyle.italic,
-                )),
-          ],
-          const Spacer(),
-          if (running)
+          ),
+          const SizedBox(width: 8),
+          if (widget.running)
             Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.fiber_manual_record,
                   size: 8, color: AppColors.online),
@@ -573,6 +658,80 @@ class _FormatBar extends StatelessWidget {
                       .copyWith(color: AppColors.textMuted)),
             ]),
         ],
+      ),
+    );
+  }
+
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Text(text,
+            style: AppType.labelSm.copyWith(color: AppColors.textDim)),
+      );
+
+  Widget _numField(
+    TextEditingController ctrl,
+    FocusNode focus,
+    VoidCallback commit, {
+    required double width,
+  }) {
+    return SizedBox(
+      width: width,
+      height: 22,
+      child: TextField(
+        controller: ctrl,
+        focusNode: focus,
+        style: AppType.monoSm.copyWith(color: AppColors.text),
+        textAlignVertical: TextAlignVertical.center,
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+          filled: true,
+          fillColor: AppColors.bg1,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(2),
+            borderSide: BorderSide(color: AppColors.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(2),
+            borderSide: BorderSide(color: AppColors.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(2),
+            borderSide: BorderSide(color: AppColors.accent),
+          ),
+        ),
+        onSubmitted: (_) => commit(),
+      ),
+    );
+  }
+
+  Widget _dropdown<T>({
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T> onChanged,
+  }) {
+    return Container(
+      height: 22,
+      decoration: BoxDecoration(
+        color: AppColors.bg1,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isDense: true,
+          iconSize: 14,
+          icon: Icon(Icons.keyboard_arrow_down, color: AppColors.textMuted),
+          dropdownColor: AppColors.bg2,
+          style: AppType.mono.copyWith(color: AppColors.text),
+          items: items,
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
+        ),
       ),
     );
   }
