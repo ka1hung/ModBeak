@@ -246,10 +246,12 @@ class _MainWindowState extends ConsumerState<MainWindow> {
   }
 
   Future<void> _onAddDevice() async {
-    await showDialog(
+    final cfg = await showDialog<DeviceConfig>(
       context: context,
       builder: (_) => const AddDeviceDialog(),
     );
+    // Focus the freshly created device so the next "Add Watch" preselects it.
+    if (cfg != null && mounted) _selectDevice(cfg.id);
   }
 
   Future<void> _onAddWatch() async {

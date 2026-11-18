@@ -8,6 +8,7 @@ import 'ui/theme/app_theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppInfo.load();
+  await loadSavedThemeMode();
   runApp(const ProviderScope(child: MbtApp()));
 }
 

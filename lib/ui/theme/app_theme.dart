@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 bool get isTouchPlatform =>
     !kIsWeb &&
@@ -230,11 +231,37 @@ AppThemeMode get currentThemeMode => _activeMode;
 final ValueNotifier<AppThemeMode> themeModeNotifier =
     ValueNotifier<AppThemeMode>(AppThemeMode.dark);
 
-void setThemeMode(AppThemeMode mode) {
-  if (mode == _activeMode) return;
+const String _kPrefThemeMode = 'ui.themeMode';
+
+void _applyThemeMode(AppThemeMode mode) {
   _activeMode = mode;
   _active = mode == AppThemeMode.light ? _lightPalette : _darkPalette;
   themeModeNotifier.value = mode;
+}
+
+/// Switches the palette and remembers the choice for the next launch.
+void setThemeMode(AppThemeMode mode) {
+  if (mode == _activeMode) return;
+  _applyThemeMode(mode);
+  SharedPreferences.getInstance()
+      .then((prefs) => prefs.setString(_kPrefThemeMode, mode.name));
+}
+
+/// Restores the persisted theme. Call before `runApp` so the first frame
+/// already uses the right palette (no dark→light flash).
+Future<void> loadSavedThemeMode() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString(_kPrefThemeMode);
+    for (final m in AppThemeMode.values) {
+      if (m.name == name) {
+        _applyThemeMode(m);
+        return;
+      }
+    }
+  } catch (_) {
+    // Prefs unavailable — keep the default palette.
+  }
 }
 
 /// Token façade. Static-style call sites (`AppColors.bg`) keep working but
